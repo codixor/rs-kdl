@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use official_kdl::KdlDocument as OfficialDocument;
-use rs_json::legacy::parse as parse_json;
+use rs_json::parse as parse_json;
 use rs_kdl::{Document, Event, Lexer, Reader, Token, Validator, Writer};
 use rs_toml::{Arena as TomlArena, parse as parse_toml};
 use rs_yaml::safe_load as parse_yaml;
@@ -317,7 +317,9 @@ fn bench_json_dom_to_interop(c: &mut Criterion) {
     let json = parse_json(SAMPLE_JSON).expect("json sample should parse");
 
     c.bench_function("kdl/interop/json_dom_to_interop", |b| {
-        b.iter(|| black_box(rs_kdl::InteropDocument::from_json_item(black_box(&json)).unwrap()));
+        b.iter(|| {
+            black_box(rs_kdl::InteropDocument::from_json_item(black_box(json.root())).unwrap())
+        });
     });
 }
 
@@ -325,7 +327,7 @@ fn bench_json_dom_to_kdl_contract(c: &mut Criterion) {
     let json = parse_json(SAMPLE_JSON).expect("json sample should parse");
 
     c.bench_function("kdl/interop/json_dom_to_kdl_contract", |b| {
-        b.iter(|| black_box(Document::from_json_item(black_box(&json)).unwrap()));
+        b.iter(|| black_box(Document::from_json_item(black_box(json.root())).unwrap()));
     });
 }
 

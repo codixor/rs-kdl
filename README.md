@@ -16,7 +16,7 @@ assert_eq!(document.nodes.len(), 1);
 
 ## Format adapters
 
-The default features enable `std`, `json-interop`, `toml-interop`, and `yaml-interop`. Each adapter can be enabled separately. They use the crates.io releases of `rs-json`, `rs-toml`, and `rs-yaml` respectively. The JSON adapter uses the `rs-json` 0.3 compatibility API for borrowed `JsonItem` values. Use `InteropDocument` to convert values between formats, or `Document` when the output should be KDL. See the [examples](https://github.com/codixor/rs-kdl/tree/main/examples) for each adapter.
+The default features enable `std`, `json-interop`, `toml-interop`, and `yaml-interop`. Each adapter can be enabled separately. They use the crates.io releases of `rs-json`, `rs-toml`, and `rs-yaml` respectively. The JSON adapter uses the native `rs-json` 0.3 document API for borrowed `Value` views. Use `InteropDocument` to convert values between formats, or `Document` when the output should be KDL. See the [examples](https://github.com/codixor/rs-kdl/tree/main/examples) for each adapter.
 
 The YAML adapter accepts string map keys and rejects aliases and explicit tags. TOML text output requires a table root and rejects null values.
 
@@ -49,13 +49,13 @@ assert_eq!(round_trip, document);
 JSON contract example:
 
 ```rust
-use rs_json::legacy::parse as parse_json;
+use rs_json::parse as parse_json;
 use rs_kdl::{Document, InteropDocument};
 
 let json = r#"{"name":"rust-misc","enabled":true}"#;
 let item = parse_json(json).expect("json parse");
-let interop = InteropDocument::from_json_item(&item).expect("shared-model bridge");
-let document = Document::from_json_item(&item).expect("json contract");
+let interop = InteropDocument::from_json_item(item.root()).expect("shared-model bridge");
+let document = Document::from_json_item(item.root()).expect("json contract");
 let rendered = document.to_json_string().expect("json render");
 
 let reparsed = InteropDocument::from_json_str(&rendered).expect("json parse");

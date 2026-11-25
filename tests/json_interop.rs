@@ -1,4 +1,4 @@
-use rs_json::legacy::parse as parse_json;
+use rs_json::parse as parse_json;
 use rs_kdl::{Document, InteropDocument, InteropValue, JsonInteropError, Node};
 
 const JSON_SAMPLE: &str = r#"{
@@ -26,7 +26,7 @@ fn json_text_round_trip_through_interop_contract() {
 #[test]
 fn json_dom_bridge_matches_json_text_bridge() {
     let json = parse_json(JSON_SAMPLE).expect("json sample should parse");
-    let from_dom = InteropDocument::from_json_item(&json).expect("dom bridge should succeed");
+    let from_dom = InteropDocument::from_json_item(json.root()).expect("dom bridge should succeed");
     let from_text = InteropDocument::from_json_str(JSON_SAMPLE).expect("text bridge should parse");
 
     assert_eq!(from_dom, from_text);
@@ -35,7 +35,8 @@ fn json_dom_bridge_matches_json_text_bridge() {
 #[test]
 fn json_dom_to_kdl_contract_matches_text_bridge() {
     let json = parse_json(JSON_SAMPLE).expect("json sample should parse");
-    let from_dom = Document::from_json_item(&json).expect("dom contract bridge should succeed");
+    let from_dom =
+        Document::from_json_item(json.root()).expect("dom contract bridge should succeed");
     let from_text =
         Document::from_json_str(JSON_SAMPLE).expect("text contract bridge should parse");
 
@@ -83,5 +84,16 @@ fn invalid_contract_document_is_rejected() {
     assert_eq!(
         error,
         JsonInteropError::InvalidContract("unexpected node name in JSON contract document")
+    );
+}
+
+#[test]
+fn native_json_values_decode_escaped_keys_and_keep_number_lexemes() {
+    let source = r#"{"\u006b":"\uD83D\uDE42","n":1.250e+02}"#;
+    let parsed = parse_json(source).unwrap();
+    let model = InteropDocument::from_json_item(parsed.root()).unwrap();
+    assert_eq!(
+        model.to_json_string().unwrap(),
+        r#"{"k":"🙂","n":1.250e+02}"#
     );
 }

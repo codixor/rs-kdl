@@ -9,7 +9,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
-use rs_json::legacy::{JsonError, JsonItem, JsonType, parse};
+use rs_json::{Error as JsonError, Value as JsonValue, ValueKind, parse};
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -57,7 +57,7 @@ impl InteropDocument {
     ///
     /// Returns [`JsonInteropError`] if a string escape cannot be decoded into
     /// the neutral model.
-    pub fn from_json_item(item: &JsonItem<'_>) -> Result<Self, JsonInteropError> {
+    pub fn from_json_item(item: JsonValue<'_, '_>) -> Result<Self, JsonInteropError> {
         Ok(Self::value(InteropValue::from_json_item(item)?))
     }
 
@@ -68,7 +68,7 @@ impl InteropDocument {
     /// Returns [`JsonInteropError`] if the JSON text is invalid or if a string
     /// escape cannot be decoded into the neutral model.
     pub fn from_json_str(source: &str) -> Result<Self, JsonInteropError> {
-        Self::from_json_item(&parse(source)?)
+        Self::from_json_item(parse(source)?.root())
     }
 
     /// Serialize a value-root neutral interop document into canonical JSON text.
@@ -118,7 +118,7 @@ impl Document {
     ///
     /// Returns [`JsonInteropError`] if the JSON item cannot be represented by
     /// the neutral interop model.
-    pub fn from_json_item(item: &JsonItem<'_>) -> Result<Self, JsonInteropError> {
+    pub fn from_json_item(item: JsonValue<'_, '_>) -> Result<Self, JsonInteropError> {
         InteropDocument::from_json_item(item)?.to_json_contract_document()
     }
 
@@ -129,7 +129,7 @@ impl Document {
     /// Returns [`JsonInteropError`] if JSON parsing fails or if contract
     /// generation fails.
     pub fn from_json_str(source: &str) -> Result<Self, JsonInteropError> {
-        Self::from_json_item(&parse(source)?)
+        Self::from_json_item(parse(source)?.root())
     }
 
     /// Convert this KDL JSON contract document back into neutral JSON interop.
@@ -161,48 +161,39 @@ impl InteropValue {
     ///
     /// Returns [`JsonInteropError`] if a JSON string escape cannot be decoded
     /// into the neutral model.
-    pub fn from_json_item(item: &JsonItem<'_>) -> Result<Self, JsonInteropError> {
+    pub fn from_json_item(item: JsonValue<'_, '_>) -> Result<Self, JsonInteropError> {
         interop_value_from_json_item(item)
     }
 }
 
-fn interop_value_from_json_item(item: &JsonItem<'_>) -> Result<InteropValue, JsonInteropError> {
+fn interop_value_from_json_item(item: JsonValue<'_, '_>) -> Result<InteropValue, JsonInteropError> {
     Ok(match item.kind() {
-        JsonType::JsonString => InteropValue::String(decode_json_string(item.as_str().ok_or(
-            JsonInteropError::InvalidContract("string item missing source slice"),
-        )?)?),
-        JsonType::JsonNumber => InteropValue::Number(InteropNumber::new(item.as_str().ok_or(
-            JsonInteropError::InvalidContract("number item missing source slice"),
-        )?)),
-        JsonType::JsonTrue => InteropValue::Bool(true),
-        JsonType::JsonFalse => InteropValue::Bool(false),
-        JsonType::JsonNull => InteropValue::Null,
-        JsonType::JsonArray => InteropValue::Sequence(
+        ValueKind::String => {
+            let text = item
+                .as_str()
+                .ok_or(JsonInteropError::InvalidString("invalid JSON string"))?;
+            InteropValue::String(SmolStr::new(text))
+        }
+        ValueKind::Number => InteropValue::Number(InteropNumber::new(item.raw())),
+        ValueKind::Bool => InteropValue::Bool(item.raw() == "true"),
+        ValueKind::Null => InteropValue::Null,
+        ValueKind::Array => InteropValue::Sequence(
             item.elements()
-                .ok_or(JsonInteropError::InvalidContract(
-                    "array item missing elements iterator",
-                ))?
+                .ok_or(JsonInteropError::InvalidContract("missing array elements"))?
                 .map(interop_value_from_json_item)
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<_, _>>()?,
         ),
-        JsonType::JsonMap => InteropValue::Map(
+        ValueKind::Object => InteropValue::Map(
             item.entries()
-                .ok_or(JsonInteropError::InvalidContract(
-                    "map item missing entries iterator",
-                ))?
+                .ok_or(JsonInteropError::InvalidContract("missing object entries"))?
                 .map(|(key, value)| {
                     Ok(InteropMapEntry {
-                        name: decode_json_string(key.as_str())?,
+                        name: SmolStr::new(key.as_str()),
                         value: interop_value_from_json_item(value)?,
                     })
                 })
-                .collect::<Result<Vec<_>, JsonInteropError>>()?,
+                .collect::<Result<_, JsonInteropError>>()?,
         ),
-        JsonType::Empty => {
-            return Err(JsonInteropError::InvalidContract(
-                "empty JSON item in parse tree",
-            ));
-        }
     })
 }
 
@@ -485,92 +476,4 @@ fn write_json_string(text: &str, output: &mut String) {
         }
     }
     output.push('"');
-}
-
-fn decode_json_string(raw: &str) -> Result<SmolStr, JsonInteropError> {
-    if !raw.contains('\\') {
-        return Ok(raw.into());
-    }
-
-    let mut output = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
-
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            output.push(ch);
-            continue;
-        }
-
-        let escape = chars
-            .next()
-            .ok_or(JsonInteropError::InvalidString("dangling escape"))?;
-        match escape {
-            '"' => output.push('"'),
-            '\\' => output.push('\\'),
-            '/' => output.push('/'),
-            'b' => output.push('\u{08}'),
-            'f' => output.push('\u{0C}'),
-            'n' => output.push('\n'),
-            'r' => output.push('\r'),
-            't' => output.push('\t'),
-            'u' => {
-                let code = read_hex_u16(&mut chars)?;
-                if (0xD800..=0xDBFF).contains(&code) {
-                    if chars.next() != Some('\\') || chars.next() != Some('u') {
-                        return Err(JsonInteropError::InvalidString(
-                            "high surrogate must be followed by a low surrogate",
-                        ));
-                    }
-                    let low = read_hex_u16(&mut chars)?;
-                    if !(0xDC00..=0xDFFF).contains(&low) {
-                        return Err(JsonInteropError::InvalidString(
-                            "invalid low surrogate after high surrogate",
-                        ));
-                    }
-                    let scalar =
-                        0x1_0000 + (((u32::from(code) - 0xD800) << 10) | (u32::from(low) - 0xDC00));
-                    let ch = char::from_u32(scalar)
-                        .ok_or(JsonInteropError::InvalidString("invalid unicode scalar"))?;
-                    output.push(ch);
-                } else if (0xDC00..=0xDFFF).contains(&code) {
-                    return Err(JsonInteropError::InvalidString(
-                        "low surrogate without a preceding high surrogate",
-                    ));
-                } else {
-                    let ch = char::from_u32(u32::from(code))
-                        .ok_or(JsonInteropError::InvalidString("invalid unicode scalar"))?;
-                    output.push(ch);
-                }
-            }
-            _ => return Err(JsonInteropError::InvalidString("unknown escape sequence")),
-        }
-    }
-
-    Ok(output.into())
-}
-
-fn read_hex_u16(chars: &mut core::str::Chars<'_>) -> Result<u16, JsonInteropError> {
-    let mut value = 0_u16;
-    for _ in 0..4 {
-        let ch = chars
-            .next()
-            .ok_or(JsonInteropError::InvalidString("incomplete unicode escape"))?;
-        let digit = ch
-            .to_digit(16)
-            .ok_or(JsonInteropError::InvalidString("non-hex unicode escape"))?;
-        let digit = u16::try_from(digit)
-            .map_err(|_| JsonInteropError::InvalidString("hex digit too large"))?;
-        value = (value << 4) | digit;
-    }
-    Ok(value)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::decode_json_string;
-
-    #[test]
-    fn decode_json_string_handles_surrogate_pairs() {
-        assert_eq!(decode_json_string(r"\uD83D\uDE42").unwrap().as_str(), "🙂");
-    }
 }
