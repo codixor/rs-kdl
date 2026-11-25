@@ -125,3 +125,12 @@ Current TOML bridge boundaries:
 The minimum and pinned stable Rust version is 1.100.0. Run `bash scripts/validate.sh` for strict Clippy, tests and documentation, `cargo deny --locked --all-features check` for dependencies, and `bash scripts/bench.sh` for the Criterion suite, including comparisons with the `kdl` crate. CI runs both fuzz targets with AddressSanitizer on a pinned nightly. [Benchmarks](https://github.com/codixor/rs-kdl/tree/main/benches)
 
 Originally developed in [codixor/rust-misc](https://github.com/codixor/rust-misc/tree/ae68abb54c655a8fcc009123fbc31821b82435e4/rs-kdl), building on [just-kdl](https://github.com/1e1001/rsutil/tree/main/just-kdl). The library is distributed under MIT or Apache-2.0. The generated compliance test data comes from the [KDL specification test suite](https://github.com/kdl-org/kdl/tree/main/tests/test_cases). See [the fixture license](https://github.com/codixor/rs-kdl/blob/main/LICENSE-KDL-TESTS).
+
+
+### Parser diagnostics
+
+Reader errors keep punctuation, token categories and byte spans. Unexpected string,
+number and boolean values are discarded. I/O errors keep the standard I/O error
+kind and discard custom messages. Validator errors identify the expected event
+without retaining the input event. Adapter errors discard input-derived numeric
+and date literals and opaque YAML/TOML backend messages.

@@ -33,9 +33,13 @@ const YAML_NULL: &str = "yaml-null";
 #[non_exhaustive]
 pub enum YamlInteropError {
     #[error(transparent)]
-    YamlParse(#[from] ParseError),
+    YamlParse(ParseError),
+    #[error("YAML parse failed")]
+    YamlParseFailed,
     #[error(transparent)]
-    YamlEmit(#[from] EmitError),
+    YamlEmit(EmitError),
+    #[error("YAML emit failed")]
+    YamlEmitFailed,
     #[error(transparent)]
     Kdl(#[from] InteropError),
     #[error("expected a value-root interop document for YAML conversion")]
@@ -48,6 +52,18 @@ pub enum YamlInteropError {
     UnsupportedYamlValue(&'static str),
     #[error("invalid neutral YAML number literal: {0}")]
     InvalidNumber(String),
+}
+
+impl From<ParseError> for YamlInteropError {
+    fn from(_: ParseError) -> Self {
+        Self::YamlParseFailed
+    }
+}
+
+impl From<EmitError> for YamlInteropError {
+    fn from(_: EmitError) -> Self {
+        Self::YamlEmitFailed
+    }
 }
 
 impl InteropDocument {
@@ -260,7 +276,7 @@ fn yaml_number_to_value(number: &InteropNumber) -> Result<Value, YamlInteropErro
     let parsed = rs_yaml::safe_load(number.as_str())?;
     match parsed {
         Value::Value(ScalarOwned::Integer(_) | ScalarOwned::FloatingPoint(_)) => Ok(parsed),
-        _ => Err(YamlInteropError::InvalidNumber(number.as_str().to_owned())),
+        _ => Err(YamlInteropError::InvalidNumber(String::new())),
     }
 }
 
