@@ -78,3 +78,22 @@ fn io_errors_preserve_the_kind_and_discard_messages() {
         matches!(error, ReaderError::Lexer(LexerError::Io(ref io)) if io.kind() == ErrorKind::PermissionDenied)
     );
 }
+
+#[cfg(feature = "toml-interop")]
+#[test]
+fn toml_bridge_drops_error_key_paths() {
+    let error = rs_kdl::InteropDocument::from_toml_str("private_fixture = 1\nprivate_fixture = 2")
+        .unwrap_err();
+    assert_redacted(&error, "private_fixture");
+}
+
+#[cfg(feature = "yaml-interop")]
+#[test]
+fn yaml_bridge_drops_number_literals_and_backend_messages() {
+    let model = rs_kdl::InteropDocument::value(rs_kdl::InteropValue::Number(
+        rs_kdl::InteropNumber::new("private-fixture"),
+    ));
+    assert_redacted(&model.to_yaml_value().unwrap_err(), "private-fixture");
+    let error = rs_kdl::YamlInteropError::from(rs_yaml::EmitError::Emit("private-fixture".into()));
+    assert_redacted(&error, "private-fixture");
+}

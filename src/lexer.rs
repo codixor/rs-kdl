@@ -485,9 +485,11 @@ impl<T: Input> Lexer<T> {
                 }
                 b"/*" => {
                     self.advance(2);
-                    depth = depth
-                        .checked_add(1)
-                        .ok_or(LexerError::CommentDepth(self.cursor - 2))?;
+                    let Some(next) = depth.checked_add(1) else {
+                        self.next_skip = NextSkip::IrrecoverableError;
+                        return Err(LexerError::CommentDepth(self.cursor - 2));
+                    };
+                    depth = next;
                 }
                 b"*/" => {
                     self.advance(2);
