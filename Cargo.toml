@@ -1,0 +1,42 @@
+[package]
+name = "rs-kdl"
+description = "Pure-Rust KDL parser and writer focused on fast parse/write workflows"
+readme = "README.md"
+repository = "https://github.com/codixor/rust-misc"
+keywords = ["kdl", "parser", "writer", "config", "serialization"]
+categories = ["parser-implementations", "encoding"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "rs_kdl"
+path = "src/lib.rs"
+
+[dependencies]
+smol_str.workspace = true
+thiserror.workspace = true
+rs-json = { workspace = true, optional = true }
+rs-toml = { workspace = true, optional = true }
+rs-yaml = { workspace = true, optional = true }
+
+[features]
+default = ["std", "json-interop", "toml-interop", "yaml-interop"]
+# enables Node::normalize and Document::normalize
+std = []
+json-interop = ["std", "dep:rs-json"]
+toml-interop = ["std", "dep:rs-toml"]
+yaml-interop = ["std", "dep:rs-yaml"]
+
+# For testing compliance & performance
+[dev-dependencies]
+criterion.workspace = true
+official_kdl.workspace = true
+
+[[bench]]
+name = "kdl_core"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+message "hello world"
+escapes "line one\nline two\tend"
+windows_path "C:\\temp\\kdl.txt"
+multiline """
+    first line
+    second line
+    """

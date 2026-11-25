@@ -1,0 +1,6 @@
+app demo
+settings {
+    theme dark
+    notifications enabled=#true
+}
+route "/dashboard"

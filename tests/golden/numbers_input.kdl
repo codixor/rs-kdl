@@ -1,0 +1,1 @@
+numbers dec=42 neg=-17 hex=0x2a oct=0o52 bin=0b101010 float=3.5e+2 frac=0.25 pos_inf=#inf neg_inf=#-inf nan_value=#nan
