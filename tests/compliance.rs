@@ -65,9 +65,7 @@ mod dom {
                     if let Ok((event, span)) = event {
                         eprintln!("Event: {event:?} {span:?}");
                         if let Err(err) = validator.push(event) {
-                            if strict {
-                                panic!("Validation: {err:?}");
-                            }
+                            assert!(!strict, "Validation: {err:?}");
                             eprintln!("Validation: {err:?}");
                         }
                     }
@@ -87,9 +85,7 @@ mod dom {
             let mut post_validator = Validator::new();
             for event in document {
                 if let Err(err) = post_validator.push(&event) {
-                    if strict {
-                        panic!("Validation: {err:?}");
-                    }
+                    assert!(!strict, "Validation: {err:?}");
                     eprintln!("Validation: {err:?}");
                 }
                 writer.push(&event).unwrap();
