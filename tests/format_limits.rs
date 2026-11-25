@@ -20,6 +20,43 @@ fn at(s: &[u8], limits: Limits, byte: usize) {
 }
 
 #[test]
+fn incomplete_keyword_reports_the_eof_insertion_point() {
+    for src in ["n #t", "n #tru", "n #fals", "n #-in", "n /-"] {
+        let error = parse(src.as_bytes(), Limits::default()).unwrap_err();
+        assert_eq!(error.category(), Category::Eof, "{src}");
+        assert_eq!(error.position().unwrap().offset, Some(src.len() as u64));
+        #[cfg(feature = "std")]
+        {
+            let reader = rs_kdl::Reader::new(rs_kdl::ReadInput::new(src.as_bytes()));
+            let error = LocatedError::from(reader.collect::<Result<Document, _>>().unwrap_err());
+            assert_eq!(error.category(), Category::Eof);
+            assert_eq!(error.position().unwrap().offset, Some(src.len() as u64));
+        }
+    }
+    assert_eq!(
+        parse(b"n #trux", Limits::default()).unwrap_err().category(),
+        Category::Syntax
+    );
+}
+
+#[test]
+fn a_failed_skip_ends_the_reader() {
+    let mut reader = rs_kdl::Reader::with_limits(
+        b"n { child; }".as_slice(),
+        Limits {
+            max_depth: 0,
+            ..Limits::default()
+        },
+    );
+    reader.next().unwrap().unwrap();
+    assert_eq!(
+        LocatedError::from(reader.skip_to_end().unwrap_err()).category(),
+        Category::Limit
+    );
+    assert!(reader.next().is_none());
+}
+
+#[test]
 fn encoded_token_bodies_exclude_delimiters() {
     for (source, body, start) in [
         ("node", 4, 0),

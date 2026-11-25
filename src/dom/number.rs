@@ -163,7 +163,9 @@ macro_rules! quick_impl {
         impl From<$ty> for Number {
             fn from(v: $ty) -> Self {
                 match v.classify() {
-                    FpCategory::Nan | FpCategory::Infinite => Self(format_smolstr!("#{v:?}")),
+                    FpCategory::Nan => Self::NAN,
+                    FpCategory::Infinite if v.is_sign_negative() => Self::NEG_INFINITY,
+                    FpCategory::Infinite => Self::INFINITY,
                     _ => Self(format_smolstr!("f{v:?}")),
                 }
             }

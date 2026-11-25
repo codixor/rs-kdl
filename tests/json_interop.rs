@@ -1,6 +1,48 @@
 use rs_json::parse as parse_json;
 use rs_kdl::{Document, InteropDocument, InteropValue, JsonInteropError, Node};
 
+#[test]
+fn json_writer_validates_the_entire_numeric_spelling() {
+    use rs_kdl::{Category, FormatError, InteropNumber};
+    for text in ["inf", "-nan", "01", "1e", "1 ", " 1", "2,3"] {
+        let doc = InteropDocument::value(InteropValue::Number(InteropNumber::new(text)));
+        assert_eq!(doc.to_json_string().unwrap_err().category(), Category::Data);
+    }
+    let doc = InteropDocument::value(InteropValue::Number(InteropNumber::new("-1.20e+99")));
+    assert_eq!(doc.to_json_string().unwrap(), "-1.20e+99");
+    #[cfg(feature = "toml-interop")]
+    assert_eq!(
+        InteropDocument::from_toml_str("rate = inf")
+            .unwrap()
+            .to_json_string()
+            .unwrap_err()
+            .category(),
+        Category::Data
+    );
+}
+
+#[test]
+fn generated_kdl_observes_its_own_depth_limit() {
+    use rs_kdl::{Category, FormatError, Limits};
+    let object = |n: usize| format!("{}0{}", "{\"k\":".repeat(n), "}".repeat(n));
+    for (max_depth, levels) in [(4, 2), (128, 64)] {
+        let limits = Limits {
+            max_depth,
+            ..Limits::default()
+        };
+        let doc = Document::from_json_str_with_limits(&object(levels), limits).unwrap();
+        Document::parse_with_limits(doc.to_string().as_bytes(), limits).unwrap();
+        let over = object(levels + 1);
+        assert!(InteropDocument::from_json_str_with_limits(&over, limits).is_ok());
+        assert_eq!(
+            Document::from_json_str_with_limits(&over, limits)
+                .unwrap_err()
+                .category(),
+            Category::Limit
+        );
+    }
+}
+
 const JSON_SAMPLE: &str = r#"{
   "meta": {
     "name": "rust-misc",

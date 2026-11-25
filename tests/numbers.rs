@@ -1,6 +1,15 @@
 mod support;
 
 #[test]
+fn nan_round_trips_at_both_float_widths() {
+    use rs_kdl::dom::Number;
+    assert_eq!(Number::from(f32::NAN), Number::NAN);
+    assert_eq!(Number::from(f64::NAN), Number::NAN);
+    assert!(f32::try_from(Number::from(f32::NAN)).unwrap().is_nan());
+    assert!(f64::try_from(Number::from(f64::NAN)).unwrap().is_nan());
+}
+
+#[test]
 fn number_fixture_matches_writer_surface() {
     let document = support::parse_document(support::NUMBERS_INPUT);
     assert_eq!(

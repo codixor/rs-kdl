@@ -25,6 +25,23 @@ fn test_info(name: &str) -> (&'static str, Option<&'static str>) {
 }
 
 #[test]
+fn trailing_commented_block_preserves_the_next_node() {
+    dom::test(
+        "first {} /- {}\nsecond\n",
+        Some("first {}\nsecond\n"),
+        false,
+    );
+    #[cfg(feature = "std")]
+    {
+        let source = b"first {} /- { skipped; } /- {}\nsecond\n".as_slice();
+        let doc = rs_kdl::Reader::new(rs_kdl::ReadInput::new(source))
+            .collect::<Result<rs_kdl::Document, _>>()
+            .unwrap();
+        assert_eq!(doc.to_string(), "first {}\nsecond");
+    }
+}
+
+#[test]
 fn unnormalized_empty_child_block() {
     dom::test("document {\n    \n}", Some("document {}\n"), false);
 }
