@@ -163,3 +163,15 @@ fn unicode_indentation_is_consumed_as_complete_characters() {
         }
     }
 }
+
+#[test]
+fn event_reader_can_use_a_higher_depth_than_an_owned_tree() {
+    let limits = Limits {
+        max_depth: 129,
+        ..Limits::default()
+    };
+    let source = "n{".repeat(129) + &"}".repeat(129);
+    let e = Document::parse_with_limits(source.as_bytes(), limits).unwrap_err();
+    assert_eq!(e.category(), Category::Limit);
+    assert!(rs_kdl::Reader::with_limits(source.as_bytes(), limits).all(|item| item.is_ok()));
+}

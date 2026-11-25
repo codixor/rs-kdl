@@ -105,6 +105,13 @@ impl FormatError for InteropError {
     }
 }
 
+// Owned trees and the adapter conversions recursively traverse and drop nodes.
+// The event reader has an explicit stack and can use a caller's higher depth.
+pub(crate) fn tree_limits(mut limits: Limits) -> Limits {
+    limits.max_depth = limits.max_depth.min(128);
+    limits
+}
+
 impl Document {
     /// Parse a single KDL document with inclusive resource bounds.
     ///
@@ -116,7 +123,7 @@ impl Document {
         {
             return Err((ReaderError::Lexer(LexerError::DocumentLimit(end)), end..end).into());
         }
-        Ok(Reader::with_limits(bytes, limits).collect::<Result<Self, _>>()?)
+        Ok(Reader::with_limits(bytes, tree_limits(limits)).collect::<Result<Self, _>>()?)
     }
 }
 

@@ -142,7 +142,9 @@ and encoded string bodies. Delimiters are excluded. Each open child block
 counts one level of nesting. Block comments have the same independent nesting
 ceiling. Expansion counts one unit per slashdash marker, including skipped
 subtrees. Zero forbids the corresponding work. A resource error ends the
-current stream.
+current stream. Owned KDL documents and the JSON text-to-tree adapters cap
+depth at 128 because their values are traversed and dropped recursively. The
+streaming reader can use a higher caller-selected depth.
 
 ```rust
 use rs_kdl::{Category, Document, FormatError, Limits};

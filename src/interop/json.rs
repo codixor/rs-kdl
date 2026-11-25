@@ -100,7 +100,9 @@ impl InteropDocument {
         source: &str,
         limits: Limits,
     ) -> Result<Self, JsonInteropError> {
-        Self::from_json_item(rs_json::parse_with_limits(source, limits)?.root())
+        Self::from_json_item(
+            rs_json::parse_with_limits(source, crate::diagnostic::tree_limits(limits))?.root(),
+        )
     }
 
     /// Serialize a value-root neutral interop document into canonical JSON text.
@@ -171,7 +173,9 @@ impl Document {
         source: &str,
         limits: Limits,
     ) -> Result<Self, JsonInteropError> {
-        Self::from_json_item(rs_json::parse_with_limits(source, limits)?.root())
+        Self::from_json_item(
+            rs_json::parse_with_limits(source, crate::diagnostic::tree_limits(limits))?.root(),
+        )
     }
 
     /// Convert this KDL JSON contract document back into neutral JSON interop.
