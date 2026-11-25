@@ -16,8 +16,8 @@ name = "rs_kdl"
 path = "src/lib.rs"
 
 [dependencies]
-smol_str = "0.3.7"
-thiserror = "2.0.21"
+smol_str = { version = "0.3.7", default-features = false }
+thiserror = { version = "2.0.21", default-features = false }
 rs-json = { version = "0.3.0", default-features = false, features = ["legacy"], optional = true }
 rs-toml = { version = "0.3.1", default-features = false, optional = true }
 rs-yaml = { version = "0.4.0", default-features = false, optional = true }
@@ -25,7 +25,7 @@ rs-yaml = { version = "0.4.0", default-features = false, optional = true }
 [features]
 default = ["std", "json-interop", "toml-interop", "yaml-interop"]
 # enables Node::normalize and Document::normalize
-std = []
+std = ["smol_str/std", "thiserror/std"]
 json-interop = ["std", "dep:rs-json"]
 toml-interop = ["std", "dep:rs-toml"]
 yaml-interop = ["std", "dep:rs-yaml"]

@@ -90,8 +90,7 @@ impl From<&Node> for InteropNode {
             children: node
                 .children
                 .as_ref()
-                .map(|children| children.nodes.iter().map(Self::from).collect())
-                .unwrap_or_default(),
+                .map_or_default(|children| children.nodes.iter().map(Self::from).collect()),
         }
     }
 }
