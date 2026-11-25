@@ -3,7 +3,7 @@
 A Rust implementation of KDL v2 with a streaming event reader, a document tree, a validator and a writer. Use it to parse, transform and write KDL configuration files.
 
 ```sh
-cargo add rs-kdl@0.2.0
+cargo add rs-kdl@0.3.0
 ```
 
 ```rust
@@ -16,7 +16,7 @@ assert_eq!(document.nodes.len(), 1);
 
 ## Format adapters
 
-The default features enable `std`, `json-interop`, `toml-interop`, and `yaml-interop`. Each adapter can be enabled separately. They use the crates.io releases of `rs-json`, `rs-toml`, and `rs-yaml` respectively. The JSON adapter uses the native `rs-json` 0.3 document API for borrowed `Value` views. Use `InteropDocument` to convert values between formats, or `Document` when the output should be KDL. See the [examples](https://github.com/codixor/rs-kdl/tree/main/examples) for each adapter.
+The default features enable `std`, `json-interop`, `toml-interop`, and `yaml-interop`. Each adapter can be enabled separately. They use the crates.io releases of `rs-json`, `rs-toml`, and `rs-yaml` respectively. The JSON adapter borrows `Value` views from `rs-json` 0.4. The YAML adapter accepts and returns `Value` from `rs-yaml` 0.6. Use `InteropDocument` to convert values between formats, or `Document` when the output should be KDL. See the [examples](https://github.com/codixor/rs-kdl/tree/main/examples) for each adapter.
 
 The YAML adapter accepts string map keys and rejects aliases and explicit tags. TOML text output requires a table root and rejects null values.
 

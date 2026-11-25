@@ -8,7 +8,7 @@ categories = ["parser-implementations", "encoding"]
 edition = "2024"
 rust-version = "1.100"
 license = "MIT OR Apache-2.0"
-version = "0.2.0"
+version = "0.3.0"
 include = ["src/**", "tests/**", "examples/**", "benches/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE-*"]
 
 [lib]
@@ -16,12 +16,12 @@ name = "rs_kdl"
 path = "src/lib.rs"
 
 [dependencies]
-rs-format = "0.1.0"
+rs-format = "0.1.1"
 smol_str = { version = "0.3.7", default-features = false }
 thiserror = { version = "2.0.21", default-features = false }
-rs-json = { version = "0.4.0", default-features = false, features = ["std"], optional = true }
-rs-toml = { version = "0.4.0", default-features = false, optional = true }
-rs-yaml = { version = "0.5.0", default-features = false, optional = true }
+rs-json = { version = "0.4.1", default-features = false, features = ["std"], optional = true }
+rs-toml = { version = "0.4.1", default-features = false, optional = true }
+rs-yaml = { version = "0.6.0", default-features = false, optional = true }
 
 [features]
 default = ["std", "json-interop", "toml-interop", "yaml-interop"]

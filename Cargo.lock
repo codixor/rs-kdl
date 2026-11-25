@@ -154,9 +154,9 @@ checksum = "e0921b3876b3a1df8a1c9f912e7f94342458022c2e84288015893d83c4d62a79"
 
 [[package]]
 name = "codixor-fast-yaml-core"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5c73d0cb2e72aefbc184ace72a2e9aba51c91b42ee43b88d80b5e3c6b6c598"
+checksum = "9c47f2f718bc85aa04aa10374d6c87a32b8ba449b4aa77607bb3d8728c2613e0"
 dependencies = [
  "indexmap",
  "memchr",
@@ -511,15 +511,15 @@ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rs-format"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0923a90fc8c06ff3e4e3b8b96b2b738ed3019c9d8a6b9ea0ce259f17fa68dc38"
+checksum = "21b298a077223c19e5e24bb8389966c8a8a593415e3cc73fbcd9756ac745637a"
 
 [[package]]
 name = "rs-json"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a1285b39f6c358d2284d03457c65c7e352a251c0a0b36e7033e1c5b984cdc6"
+checksum = "8ac6cdda6417bec4af80b58aaace84928e3f4a746bd5d4c8de11c9487c83d820"
 dependencies = [
  "memchr",
  "rs-format",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "rs-kdl"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "kdl",
@@ -543,9 +543,9 @@ dependencies = [
 
 [[package]]
 name = "rs-toml"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b169cd2a7bc7c6b8bdf833e58a62600367a34b3382209979d191321861e4b00f"
+checksum = "82eb8417fece07268f4a771fd08aef84ae848dc1d17cbca94e268ff0e7e3b63a"
 dependencies = [
  "foldhash",
  "rs-format",
@@ -555,9 +555,9 @@ dependencies = [
 
 [[package]]
 name = "rs-yaml"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d37dbfa40a807ea54c0e8d5b6f0ab3d38b1e5db8eebf9b2e54c13eb8e43a248"
+checksum = "c147ca0512c6118596499a3320372834e102ff5a4d942100b26fa7a66743254e"
 dependencies = [
  "codixor-fast-yaml-core",
  "indexmap",
