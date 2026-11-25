@@ -19,6 +19,8 @@ pub enum ValidatorError {
     Unclosed,
     #[error("Expected {0}, got {1:?}")]
     Expected(&'static str, Event),
+    #[error("Expected {0}")]
+    ExpectedEvent(&'static str),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -70,14 +72,11 @@ impl Validator {
                 self.nest += 1;
                 State::Node
             }
-            (State::Node, event) => {
-                return Err(ValidatorError::Expected(
-                    "Entry, Children, or End",
-                    event.clone(),
-                ));
+            (State::Node, _) => {
+                return Err(ValidatorError::ExpectedEvent("Entry, Children, or End"));
             }
-            (State::Block, event) => {
-                return Err(ValidatorError::Expected("Node or End", event.clone()));
+            (State::Block, _) => {
+                return Err(ValidatorError::ExpectedEvent("Node or End"));
             }
         };
         Ok(())

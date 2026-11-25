@@ -96,7 +96,7 @@ pub enum LexerError {
     #[cfg(feature = "std")]
     #[expect(clippy::absolute_paths, reason = "feature-gated")]
     #[error("{0}")]
-    Io(#[from] std::io::Error),
+    Io(#[source] std::io::Error),
     #[cfg(not(feature = "std"))]
     #[error("io error")]
     Io(()),
@@ -130,6 +130,15 @@ pub enum LexerError {
     InvalidOperator,
     #[error("Missing expected text")]
     MissingText,
+    #[error("Block comment nesting limit exceeded at {0}")]
+    CommentDepth(usize),
+}
+
+#[cfg(feature = "std")]
+impl From<std::io::Error> for LexerError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error.kind().into())
+    }
 }
 
 /// Don't trust this impl :)
@@ -226,7 +235,7 @@ impl<T: std::io::Read> Input for ReadInput<T> {
                 Ok(0) => break,
                 Ok(n) => start += n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(LexerError::Io(e)),
+                Err(e) => return Err(e.into()),
             }
         }
         self.buffer_len = start as u8;
@@ -388,6 +397,10 @@ impl<T: Input> Lexer<T> {
             Err(err) => {
                 // TODO/perf: i think it's better to have it here (instead of in next_token)
                 self.next_skip = NextSkip::IrrecoverableError;
+                #[cfg(feature = "std")]
+                if let LexerError::Io(io) = err {
+                    return Err(io.into());
+                }
                 Err(err)
             }
         }
@@ -472,7 +485,9 @@ impl<T: Input> Lexer<T> {
                 }
                 b"/*" => {
                     self.advance(2);
-                    depth = depth.checked_add(1).expect("excessive comment depth");
+                    depth = depth
+                        .checked_add(1)
+                        .ok_or(LexerError::CommentDepth(self.cursor - 2))?;
                 }
                 b"*/" => {
                     self.advance(2);
@@ -1141,6 +1156,7 @@ impl<T: Input> Lexer<T> {
                 self.recover_until(utf8_len, |ch| matches!(ch, utf8_class!(line)))?;
             }
             NextSkip::RecoverBlockComment(mut depth) => {
+                let mut overflow = false;
                 self.recover_until(
                     |_| 2,
                     |ch| {
@@ -1152,13 +1168,22 @@ impl<T: Input> Lexer<T> {
                                 false
                             }
                         } else if ch == b"/*" {
-                            depth += 1;
-                            false
+                            if let Some(next) = depth.checked_add(1) {
+                                depth = next;
+                                false
+                            } else {
+                                overflow = true;
+                                true
+                            }
                         } else {
                             false
                         }
                     },
                 )?;
+                if overflow {
+                    self.next_skip = NextSkip::IrrecoverableError;
+                    return Err(LexerError::CommentDepth(self.cursor - 2));
+                }
             }
             NextSkip::RecoverString { multiline, hashes } => {
                 let quotes = if multiline { 3_usize } else { 1_usize };

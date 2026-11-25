@@ -181,7 +181,7 @@ impl TryFrom<&InteropValue> for Value {
             InteropValue::String(text) => Ok(Self::String(text.clone())),
             InteropValue::Number(number) => Number::from_str(number.as_str())
                 .map(Self::Number)
-                .map_err(|()| InteropError::InvalidNumber(number.text.clone())),
+                .map_err(|()| InteropError::InvalidNumber(SmolStr::default())),
             InteropValue::Bool(value) => Ok(Self::Bool(*value)),
             InteropValue::Null => Ok(Self::Null),
             InteropValue::Temporal(temporal) => Ok(Self::String(temporal.text.clone())),

@@ -26,6 +26,8 @@ pub enum ReaderError {
     ExpectedValue(Token),
     #[error("Expected ')', got {0}")]
     ExpectedCloseParen(Token),
+    #[error("Unexpected boolean token")]
+    UnexpectedBoolean,
     #[error("Unclosed '{{' before end of file")]
     UnclosedOpen,
     #[error("Unmatched '}}'")]
@@ -77,6 +79,16 @@ pub struct Reader<T> {
     /// current children block depth, true = sd
     // TODO/perf: replace with a bitwise vector of some kind
     brackets: Vec<bool>,
+}
+
+// Preserve punctuation and token categories without holding values from the input.
+fn unexpected(token: Token, make: fn(Token) -> ReaderError) -> ReaderError {
+    match token {
+        Token::String(_) => make(Token::SkippedString),
+        Token::Number(_) => make(Token::SkippedNumber),
+        Token::Bool(_) => ReaderError::UnexpectedBoolean,
+        other => make(other),
+    }
 }
 
 impl<T: Input> Reader<T> {
@@ -144,7 +156,7 @@ impl<T: Input> Reader<T> {
         Ok(match token.0 {
             Token::String(text) => Some(text),
             Token::SkippedString => None,
-            _ => return Err((ReaderError::ExpectedString(token.0), token.1)),
+            _ => return Err((unexpected(token.0, ReaderError::ExpectedString), token.1)),
         })
     }
     fn value(skip: bool, token: Spanned<Token>) -> ReaderResult<Option<Value>> {
@@ -155,7 +167,7 @@ impl<T: Input> Reader<T> {
             Token::Number(number) => Some(Value::Number(number)),
             Token::Bool(value) => (!skip).then_some(Value::Bool(value)),
             Token::Null => (!skip).then_some(Value::Null),
-            _ => return Err((ReaderError::ExpectedValue(token.0), token.1)),
+            _ => return Err((unexpected(token.0, ReaderError::ExpectedValue), token.1)),
         })
     }
     /// String ) Spaces?
@@ -167,7 +179,10 @@ impl<T: Input> Reader<T> {
         self.peek(skip)?;
         let close = self.advance();
         if close.0 != Token::CloseParen {
-            return Err((ReaderError::ExpectedCloseParen(close.0), close.1));
+            return Err((
+                unexpected(close.0, ReaderError::ExpectedCloseParen),
+                close.1,
+            ));
         }
         self.skip_spaces(skip)?;
         Ok(text)

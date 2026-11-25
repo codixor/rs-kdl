@@ -34,9 +34,13 @@ const TOML_DATETIME: &str = "toml-datetime";
 #[non_exhaustive]
 pub enum TomlInteropError {
     #[error(transparent)]
-    TomlParse(#[from] rs_toml::Error),
+    TomlParse(rs_toml::Error),
+    #[error("TOML parse failed")]
+    TomlParseFailed,
     #[error(transparent)]
-    TomlEmit(#[from] ToTomlError),
+    TomlEmit(ToTomlError),
+    #[error("TOML emit failed")]
+    TomlEmitFailed,
     #[error(transparent)]
     Kdl(#[from] InteropError),
     #[error("expected a value-root interop document for TOML conversion")]
@@ -55,6 +59,18 @@ pub enum TomlInteropError {
     InvalidNumber(String),
     #[error("invalid neutral TOML datetime literal: {0}")]
     InvalidDateTime(String),
+}
+
+impl From<rs_toml::Error> for TomlInteropError {
+    fn from(_: rs_toml::Error) -> Self {
+        Self::TomlParseFailed
+    }
+}
+
+impl From<ToTomlError> for TomlInteropError {
+    fn from(_: ToTomlError) -> Self {
+        Self::TomlEmitFailed
+    }
 }
 
 impl InteropDocument {
@@ -309,11 +325,11 @@ fn toml_item_from_number<'a>(number: &InteropNumber) -> Result<Item<'a>, TomlInt
     let text = number.as_str().replace('_', "");
     if is_toml_float_literal(&text) {
         let value =
-            f64::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber(text.clone()))?;
+            f64::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber(String::new()))?;
         Ok(Item::from(value))
     } else {
         let value =
-            i128::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber(text.clone()))?;
+            i128::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber(String::new()))?;
         Ok(Item::from(value))
     }
 }
@@ -325,7 +341,7 @@ fn is_toml_float_literal(text: &str) -> bool {
 
 fn toml_item_from_temporal<'a>(temporal: &InteropTemporal) -> Result<Item<'a>, TomlInteropError> {
     let value = rs_toml::DateTime::from_str(temporal.as_str())
-        .map_err(|_| TomlInteropError::InvalidDateTime(temporal.as_str().to_owned()))?;
+        .map_err(|_| TomlInteropError::InvalidDateTime(String::new()))?;
     Ok(Item::from(value))
 }
 

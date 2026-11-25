@@ -12,11 +12,14 @@ fn validator_accepts_reader_output() {
 fn validator_rejects_entry_before_node() {
     let mut validator = Validator::new();
     let error = validator
-        .push(&Event::Entry(Entry::new_value(Value::Null)))
+        .push(&Event::Entry(Entry::new_value(Value::String(
+            "private-fixture".into(),
+        ))))
         .expect_err("entry before node must be invalid");
 
+    assert!(!format!("{error} {error:?}").contains("private-fixture"));
     match error {
-        ValidatorError::Expected(expected, Event::Entry(_)) => {
+        ValidatorError::ExpectedEvent(expected) => {
             assert_eq!(expected, "Node or End");
         }
         other => panic!("unexpected validator error: {other:?}"),
