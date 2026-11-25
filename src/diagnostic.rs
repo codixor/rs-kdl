@@ -41,7 +41,10 @@ impl FormatError for LocatedError {
 impl FormatError for LexerError {
     fn category(&self) -> Category {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(_) => Category::Io,
+            #[cfg(not(feature = "std"))]
+            Self::Io(()) => Category::Io,
             Self::UnexpectedEof(_) => Category::Eof,
             Self::DocumentLimit(_)
             | Self::TokenLimit(_)

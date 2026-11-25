@@ -825,13 +825,13 @@ impl<T: Input> Lexer<T> {
         }
     }
     fn ident(&mut self, skip: bool) -> LexerResult<Token> {
-        self.start_body();
         #[derive(Clone, Copy, PartialEq)]
         enum Preview {
             Regular,
             Number,
             Keyword,
         }
+        self.start_body();
         // check for number-like value or bad keyword
         let preview = match self.peek(2..2)? {
             [b'0'..=b'9', ..] | [b'+' | b'-', b'0'..=b'9'] => Preview::Number,
@@ -1262,7 +1262,7 @@ impl<T: Input> Lexer<T> {
             },
             NextSkip::RecoverBlockComment(depth) => self.recover_block(depth)?,
             NextSkip::RecoverString { multiline, hashes } => {
-                self.recover_string(multiline, hashes)?
+                self.recover_string(multiline, hashes)?;
             }
             NextSkip::IrrecoverableError => return Ok(Token::Eof),
         }
