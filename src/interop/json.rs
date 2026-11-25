@@ -9,6 +9,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
+use rs_json::lex::{Lexer as _, Token, slice::SliceLexer};
 use rs_json::{Error as JsonError, Value as JsonValue, ValueKind, parse};
 use smol_str::SmolStr;
 use thiserror::Error;
@@ -43,6 +44,9 @@ pub enum JsonInteropError {
     InvalidContract(&'static str),
     #[error("invalid decoded JSON string: {0}")]
     InvalidString(&'static str),
+    /// The generated child blocks would exceed the owned KDL depth limit.
+    #[error("generated JSON contract exceeds the KDL depth limit")]
+    DepthLimit,
 }
 
 impl From<JsonError> for JsonInteropError {
@@ -56,6 +60,7 @@ impl FormatError for JsonInteropError {
         match self {
             Self::Json(e) => e.category(),
             Self::Kdl(e) => e.category(),
+            Self::DepthLimit => Category::Limit,
             _ => Category::Data,
         }
     }
@@ -110,12 +115,12 @@ impl InteropDocument {
     /// # Errors
     ///
     /// Returns [`JsonInteropError::ExpectedValueRoot`] if the document is
-    /// node-root instead of value-root.
+    /// node-root instead of value-root, or a data error for a non-JSON numeric literal.
     pub fn to_json_string(&self) -> Result<String, JsonInteropError> {
         match &self.root {
             InteropRoot::Value(value) => {
                 let mut output = String::new();
-                write_json_value(value, &mut output);
+                write_json_value(value, &mut output)?;
                 Ok(output)
             }
             InteropRoot::Nodes(_) => Err(JsonInteropError::ExpectedValueRoot),
@@ -127,9 +132,19 @@ impl InteropDocument {
     /// # Errors
     ///
     /// Returns [`JsonInteropError::ExpectedValueRoot`] if the interop document
-    /// is node-root instead of value-root.
+    /// is node-root instead of value-root, or [`JsonInteropError::DepthLimit`]
+    /// when its generated child blocks exceed the owned KDL depth limit.
     pub fn to_json_contract_document(&self) -> Result<Document, JsonInteropError> {
-        let contract = interop_to_json_contract(self)?;
+        self.to_json_contract_with_depth(
+            crate::diagnostic::tree_limits(Limits::default()).max_depth,
+        )
+    }
+
+    fn to_json_contract_with_depth(&self, max_depth: u32) -> Result<Document, JsonInteropError> {
+        let InteropRoot::Value(value) = &self.root else {
+            return Err(JsonInteropError::ExpectedValueRoot);
+        };
+        let contract = InteropDocument::nodes(vec![contract_node_from_value(value, max_depth)?]);
         Ok(Document::from_interop(&contract)?)
     }
 
@@ -173,9 +188,10 @@ impl Document {
         source: &str,
         limits: Limits,
     ) -> Result<Self, JsonInteropError> {
-        Self::from_json_item(
-            rs_json::parse_with_limits(source, crate::diagnostic::tree_limits(limits))?.root(),
-        )
+        let limits = crate::diagnostic::tree_limits(limits);
+        let parsed = rs_json::parse_with_limits(source, limits)?;
+        InteropDocument::from_json_item(parsed.root())?
+            .to_json_contract_with_depth(limits.max_depth)
     }
 
     /// Convert this KDL JSON contract document back into neutral JSON interop.
@@ -243,17 +259,6 @@ fn interop_value_from_json_item(item: JsonValue<'_, '_>) -> Result<InteropValue,
     })
 }
 
-fn interop_to_json_contract(
-    document: &InteropDocument,
-) -> Result<InteropDocument, JsonInteropError> {
-    match &document.root {
-        InteropRoot::Value(value) => Ok(InteropDocument::nodes(vec![contract_node_from_value(
-            value,
-        )])),
-        InteropRoot::Nodes(_) => Err(JsonInteropError::ExpectedValueRoot),
-    }
-}
-
 fn json_contract_to_interop(
     document: &InteropDocument,
 ) -> Result<InteropDocument, JsonInteropError> {
@@ -272,8 +277,21 @@ fn json_contract_to_interop(
     }
 }
 
-fn contract_node_from_value(value: &InteropValue) -> InteropNode {
-    match value {
+fn contract_node_from_value(
+    value: &InteropValue,
+    remaining: u32,
+) -> Result<InteropNode, JsonInteropError> {
+    // A nonempty object opens an object block and a key-entry block before its
+    // value. Empty containers render as childless nodes.
+    let blocks = match value {
+        InteropValue::Map(entries) if !entries.is_empty() => 2,
+        InteropValue::Sequence(items) if !items.is_empty() => 1,
+        _ => 0,
+    };
+    let child_depth = remaining
+        .checked_sub(blocks)
+        .ok_or(JsonInteropError::DepthLimit)?;
+    Ok(match value {
         InteropValue::String(text) => InteropNode {
             name: JSON_STRING.into(),
             type_hint: None,
@@ -316,7 +334,10 @@ fn contract_node_from_value(value: &InteropValue) -> InteropNode {
             name: JSON_ARRAY.into(),
             type_hint: None,
             fields: Vec::new(),
-            children: items.iter().map(contract_node_from_value).collect(),
+            children: items
+                .iter()
+                .map(|item| contract_node_from_value(item, child_depth))
+                .collect::<Result<_, _>>()?,
         },
         InteropValue::Map(entries) => InteropNode {
             name: JSON_OBJECT.into(),
@@ -324,17 +345,19 @@ fn contract_node_from_value(value: &InteropValue) -> InteropNode {
             fields: Vec::new(),
             children: entries
                 .iter()
-                .map(|entry| InteropNode {
-                    name: JSON_ENTRY.into(),
-                    type_hint: None,
-                    fields: vec![InteropField::Value(InteropTypedValue::new(
-                        InteropValue::String(entry.name.clone()),
-                    ))],
-                    children: vec![contract_node_from_value(&entry.value)],
+                .map(|entry| {
+                    Ok(InteropNode {
+                        name: JSON_ENTRY.into(),
+                        type_hint: None,
+                        fields: vec![InteropField::Value(InteropTypedValue::new(
+                            InteropValue::String(entry.name.clone()),
+                        ))],
+                        children: vec![contract_node_from_value(&entry.value, child_depth)?],
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, JsonInteropError>>()?,
         },
-    }
+    })
 }
 
 fn value_from_contract_node(node: &InteropNode) -> Result<InteropValue, JsonInteropError> {
@@ -471,11 +494,22 @@ fn ensure_childless(node: &InteropNode, kind: &'static str) -> Result<(), JsonIn
     }
 }
 
-fn write_json_value(value: &InteropValue, output: &mut String) {
+fn write_json_value(value: &InteropValue, output: &mut String) -> Result<(), JsonInteropError> {
     match value {
         InteropValue::String(text) => write_json_string(text, output),
         InteropValue::Temporal(temporal) => write_json_string(&temporal.text, output),
-        InteropValue::Number(number) => output.push_str(number.as_str()),
+        InteropValue::Number(number) => {
+            let text = number.as_str();
+            let mut lexer = SliceLexer::new(text.as_bytes(), true);
+            if !matches!(lexer.next_token(), Ok(Token::Num))
+                || lexer.content_a().len() != text.len()
+            {
+                return Err(JsonInteropError::InvalidContract(
+                    "number cannot be represented in JSON",
+                ));
+            }
+            output.push_str(text);
+        }
         InteropValue::Bool(true) => output.push_str("true"),
         InteropValue::Bool(false) => output.push_str("false"),
         InteropValue::Null => output.push_str("null"),
@@ -485,7 +519,7 @@ fn write_json_value(value: &InteropValue, output: &mut String) {
                 if index > 0 {
                     output.push(',');
                 }
-                write_json_value(item, output);
+                write_json_value(item, output)?;
             }
             output.push(']');
         }
@@ -497,11 +531,12 @@ fn write_json_value(value: &InteropValue, output: &mut String) {
                 }
                 write_json_string(&entry.name, output);
                 output.push(':');
-                write_json_value(&entry.value, output);
+                write_json_value(&entry.value, output)?;
             }
             output.push('}');
         }
     }
+    Ok(())
 }
 
 fn write_json_string(text: &str, output: &mut String) {

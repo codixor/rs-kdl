@@ -71,6 +71,11 @@ enum State {
     Done,
 }
 
+struct ChildBlock {
+    commented: bool,
+    real_body_available: bool,
+}
+
 /// Reader of document events.
 pub struct Reader<T> {
     // TODO: generic token source, if there's a use case for that
@@ -78,9 +83,7 @@ pub struct Reader<T> {
     // TODO/perf: remove implicit peek/advance pairs in mid-parsing code, looks awful
     peek_token: Option<Spanned<Token>>,
     state: State,
-    /// current children block depth, true = sd
-    // TODO/perf: replace with a bitwise vector of some kind
-    brackets: Vec<bool>,
+    brackets: Vec<ChildBlock>,
 }
 
 fn unexpected(token: &Token, expected: ReaderError) -> ReaderError {
@@ -234,8 +237,8 @@ impl<T: Input> Reader<T> {
                             return Err((ReaderError::UnmatchedClose, span));
                         };
                         self.advance();
-                        self.state = State::NodeChildren(pop);
-                        return Ok((InnerEvent::End(pop), span));
+                        self.state = State::NodeChildren(pop.real_body_available);
+                        return Ok((InnerEvent::End(pop.commented), span));
                     }
                     _ => {}
                 }
@@ -292,10 +295,14 @@ impl<T: Input> Reader<T> {
                         {
                             return Err((ReaderError::DepthLimit(mv_span.start), mv_span));
                         }
-                        self.brackets.push(sd && real_body);
+                        self.brackets.push(ChildBlock {
+                            commented: sd,
+                            real_body_available: sd && real_body,
+                        });
                         self.state = State::NextNode;
                         Ok((InnerEvent::Children(sd), start..mv_span.end))
                     }
+                    Token::Eof if sd => Err((ReaderError::UnexpectedEof, mv_span)),
                     _ if !entries => Err((ReaderError::ExpectedBlock, start..mv_span.end)),
                     _ if !sd && !spaces => {
                         Err((ReaderError::ExpectedEntrySpace, start..mv_span.end))
@@ -419,6 +426,7 @@ impl<T: Input> Reader<T> {
     /// On any syntax errors.
     pub fn skip_to_end(&mut self) -> ReaderResult<()> {
         self.skip_bracketed(&InnerEvent::Node(None), &InnerEvent::End(false))
+            .inspect_err(|_| self.state = State::Done)
     }
 }
 

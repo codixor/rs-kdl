@@ -485,9 +485,14 @@ impl<T: Input> Lexer<T> {
         self.advance(text.len())
     }
     fn adv_uncertain(&mut self, text: &[u8]) -> LexerResult<()> {
-        if self.peek(text.len()..text.len())? == text {
+        let input = self.peek(text.len()..text.len())?;
+        if input == text {
             self.advance(text.len())?;
             Ok(())
+        } else if text.starts_with(input) {
+            let len = input.len();
+            self.advance(len)?;
+            Err(LexerError::UnexpectedEof(self.cursor))
         } else {
             Err(LexerError::MissingText)
         }
@@ -1048,19 +1053,33 @@ impl<T: Input> Lexer<T> {
         // it must have no body text. by only reading the indent as the smallest common
         // one, this validates indents while only allocating one line
         let mut indent = SmolStrBuilder2::new();
-        let mut peek_indent = self.peek_table(utf8_len)?;
-        // get first line indent
-        while matches!(peek_indent, utf8_class!(space)) {
-            let ch = codepoint(peek_indent).expect("known UTF-8 whitespace");
-            let size = peek_indent.len();
-            self.advance(size)?;
-            indent.push(ch);
-            peek_indent = self.peek_table(utf8_len)?;
+        // A whitespace-only line places no constraint on the closing indentation.
+        loop {
+            let mut peek_indent = self.peek_table(utf8_len)?;
+            while matches!(peek_indent, utf8_class!(space)) {
+                let ch = codepoint(peek_indent).expect("known UTF-8 whitespace");
+                let size = peek_indent.len();
+                self.advance(size)?;
+                indent.push(ch);
+                peek_indent = self.peek_table(utf8_len)?;
+            }
+            let Some(newline) = self.newline_crlf()? else {
+                break;
+            };
+            self.advance(newline.get())?;
+            indent.truncate_floor(0);
         }
         let mut next_truncate_length = indent.len();
         'line: loop {
             // if there's any leftover indent it's more indented than minimum (or empty)
-            let has_leading_space = matches!(self.peek_table(utf8_len)?, utf8_class!(space));
+            let mut next = self.peek_table(utf8_len)?;
+            let has_leading_space = matches!(next, utf8_class!(space));
+            while matches!(next, utf8_class!(space)) {
+                let size = next.len();
+                self.advance(size)?;
+                next = self.peek_table(utf8_len)?;
+            }
+            let blank_line = self.newline_crlf()?.is_some();
             // line body / end of string
             let mut has_body = false;
             'text: loop {
@@ -1115,7 +1134,7 @@ impl<T: Input> Lexer<T> {
                 }
             }
             // truncate if line isn't empty
-            if has_body {
+            if !blank_line {
                 indent.truncate_floor(next_truncate_length);
             }
             // take longest matching indent
@@ -1303,6 +1322,11 @@ impl<T: Input> Lexer<T> {
             b"#in" => self.keyword_number(b"#in", b"f", skip, Number::INFINITY)?,
             b"#-i" => self.keyword_number(b"#-i", b"nf", skip, Number::NEG_INFINITY)?,
             b"#na" => self.keyword_number(b"#na", b"n", skip, Number::NAN)?,
+            [b'#', b't' | b'f' | b'n' | b'i' | b'-'] => {
+                self.start_body();
+                self.advance(2)?;
+                return Err(LexerError::UnexpectedEof(self.cursor));
+            }
             [b'#', ..] | b"\"" => self.string(skip)?,
             b"/-" => {
                 if self.slashdashes >= self.limits.max_expansion {
