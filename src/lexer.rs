@@ -13,6 +13,7 @@ use core::mem::discriminant;
 use core::num::NonZeroUsize;
 use core::ops::Range;
 
+use rs_format::Limits;
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -96,7 +97,7 @@ pub enum LexerError {
     #[cfg(feature = "std")]
     #[expect(clippy::absolute_paths, reason = "feature-gated")]
     #[error("{0}")]
-    Io(#[source] std::io::Error),
+    Io(std::io::ErrorKind),
     #[cfg(not(feature = "std"))]
     #[error("io error")]
     Io(()),
@@ -132,12 +133,20 @@ pub enum LexerError {
     MissingText,
     #[error("Block comment nesting limit exceeded at {0}")]
     CommentDepth(usize),
+    #[error("Document byte limit exceeded at {0}")]
+    DocumentLimit(usize),
+    #[error("Token byte limit exceeded at {0}")]
+    TokenLimit(usize),
+    #[error("Nested comment limit exceeded at {0}")]
+    DepthLimit(usize),
+    #[error("Slashdash limit exceeded at {0}")]
+    ExpansionLimit(usize),
 }
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for LexerError {
     fn from(error: std::io::Error) -> Self {
-        Self::Io(error.kind().into())
+        Self::Io(error.kind())
     }
 }
 
@@ -306,6 +315,12 @@ fn utf8_len(first: u8) -> usize {
     LUT[(first >> 4) as usize] as usize
 }
 
+// Called with a single scalar from peek_table(utf8_len). Copy it before advancing
+// the input so allocation can happen only after the byte budget accepts it.
+fn codepoint(bytes: &[u8]) -> Option<char> {
+    str::from_utf8(bytes).ok()?.chars().next()
+}
+
 /// Generic "buffer" to abstract over allocation type
 // TODO/perf: try dynamic dispatching this instead of mono
 pub(crate) trait StringOutput {
@@ -371,6 +386,9 @@ impl StringOutput for () {
 #[derive(Debug)]
 pub struct Lexer<T> {
     reader: T,
+    limits: Limits,
+    token_end: Option<usize>,
+    slashdashes: u64,
     cursor: usize,
     next_skip: NextSkip,
 }
@@ -384,23 +402,52 @@ pub struct Lexer<T> {
 #[expect(clippy::unnested_or_patterns, reason = "does not respect utf8_class")]
 impl<T: Input> Lexer<T> {
     /// Create a new lexer from the input.
-    pub const fn new(input: T) -> Self {
+    pub fn new(input: T) -> Self {
+        Self::with_limits(input, Limits::default())
+    }
+    /// Create a lexer with inclusive per-document limits.
+    pub const fn with_limits(input: T, limits: Limits) -> Self {
         Self {
+            limits,
+            token_end: None,
+            slashdashes: 0,
             reader: input,
             cursor: 0,
             next_skip: NextSkip::None,
         }
     }
+    pub(crate) const fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    fn start_body(&mut self) {
+        self.token_end = Some(self.cursor.saturating_add(self.limits.max_token_bytes));
+    }
+    fn check_body(&self, position: usize) -> LexerResult<()> {
+        if let Some(end) = self.token_end
+            && position > end
+        {
+            return Err(LexerError::TokenLimit(end));
+        }
+        Ok(())
+    }
+
     fn peek(&mut self, n: Range<usize>) -> LexerResult<&[u8]> {
+        // Several scanners process an entire slice at once. Limit that window
+        // before handing it to a builder, retaining four bytes for UTF-8 lookahead.
+        let doc_end = usize::try_from(self.limits.max_document_bytes).unwrap_or(usize::MAX);
+        let end = doc_end.min(self.token_end.unwrap_or(usize::MAX));
+        let window = end
+            .saturating_sub(self.cursor)
+            .saturating_add(char::MAX_LEN_UTF8);
         match self.reader.peek(n.start) {
-            Ok(result) => Ok(&result[..result.len().min(n.end)]),
+            Ok(result) if !result.is_empty() && self.cursor >= doc_end => {
+                Err(LexerError::DocumentLimit(doc_end))
+            }
+            Ok(result) => Ok(&result[..result.len().min(n.end).min(window)]),
             Err(err) => {
                 // TODO/perf: i think it's better to have it here (instead of in next_token)
                 self.next_skip = NextSkip::IrrecoverableError;
-                #[cfg(feature = "std")]
-                if let LexerError::Io(io) = err {
-                    return Err(io.into());
-                }
                 Err(err)
             }
         }
@@ -415,42 +462,53 @@ impl<T: Input> Lexer<T> {
         let size = f(first);
         self.peek(size..size)
     }
-    fn advance(&mut self, n: usize) {
-        self.cursor += n;
+    fn advance(&mut self, n: usize) -> LexerResult<()> {
+        let end = self
+            .cursor
+            .checked_add(n)
+            .ok_or(LexerError::DocumentLimit(usize::MAX))?;
+        let document_end = usize::try_from(self.limits.max_document_bytes).unwrap_or(usize::MAX);
+        if end > document_end {
+            return Err(LexerError::DocumentLimit(document_end));
+        }
+        self.check_body(end)?;
+        self.cursor = end;
         self.reader.advance(n);
+        Ok(())
     }
-    fn adv_certain(&mut self, text: &[u8]) {
+    fn adv_certain(&mut self, text: &[u8]) -> LexerResult<()> {
         debug_assert_eq!(
-            self.peek(text.len()..text.len()).unwrap(),
+            self.peek(text.len()..text.len())?,
             text,
             "adv_certain was certainly wrong"
         );
-        self.advance(text.len());
+        self.advance(text.len())
     }
     fn adv_uncertain(&mut self, text: &[u8]) -> LexerResult<()> {
         if self.peek(text.len()..text.len())? == text {
-            self.advance(text.len());
+            self.advance(text.len())?;
             Ok(())
         } else {
             Err(LexerError::MissingText)
         }
     }
-    fn begin_skip(&mut self, size: usize, skip: NextSkip) -> Token {
-        self.advance(size);
+    fn begin_skip(&mut self, size: usize, skip: NextSkip) -> LexerResult<Token> {
+        self.advance(size)?;
         self.next_skip = skip;
-        match skip {
+        Ok(match skip {
             NextSkip::Spaces => Token::Spaces,
             NextSkip::Lines => Token::Lines,
             _ => unreachable!(),
-        }
+        })
     }
-    fn just(&mut self, size: usize, token: Token) -> Token {
-        self.advance(size);
-        token
+    fn just(&mut self, size: usize, token: Token) -> LexerResult<Token> {
+        self.advance(size)?;
+        Ok(token)
     }
     // TODO/perf: check that head never appears in release builds
     fn keyword(&mut self, head: &[u8], tail: &[u8], token: Token) -> LexerResult<Token> {
-        self.adv_certain(head);
+        self.start_body();
+        self.adv_certain(head)?;
         self.adv_uncertain(tail)?;
         Ok(token)
     }
@@ -469,7 +527,12 @@ impl<T: Input> Lexer<T> {
         self.keyword(head, tail, token)
     }
     fn block_comment(&mut self) -> LexerResult<()> {
-        self.adv_certain(b"/*");
+        self.adv_certain(b"/*")?;
+        let start = self.cursor - 2;
+        if self.limits.max_depth == 0 {
+            return Err(LexerError::DepthLimit(start));
+        }
+        self.start_body();
         let mut depth = 0_usize;
         loop {
             self.next_skip = NextSkip::RecoverBlockComment(depth);
@@ -484,7 +547,13 @@ impl<T: Input> Lexer<T> {
                     return Err(LexerError::InvalidCharacter(self.cursor));
                 }
                 b"/*" => {
-                    self.advance(2);
+                    self.advance(2)?;
+                    if depth
+                        >= usize::try_from(self.limits.max_depth.saturating_sub(1))
+                            .unwrap_or(usize::MAX)
+                    {
+                        return Err(LexerError::DepthLimit(self.cursor - 2));
+                    }
                     let Some(next) = depth.checked_add(1) else {
                         self.next_skip = NextSkip::IrrecoverableError;
                         return Err(LexerError::CommentDepth(self.cursor - 2));
@@ -492,14 +561,17 @@ impl<T: Input> Lexer<T> {
                     depth = next;
                 }
                 b"*/" => {
-                    self.advance(2);
+                    if depth == 0 {
+                        self.token_end = None;
+                    }
+                    self.advance(2)?;
                     match depth.checked_sub(1) {
                         Some(new) => depth = new,
                         None => break,
                     }
                 }
-                [b'/' | b'*', ..] => self.advance(1),
-                text if str::from_utf8(text).is_ok() => self.advance(size),
+                [b'/' | b'*', ..] => self.advance(1)?,
+                text if str::from_utf8(text).is_ok() => self.advance(size)?,
                 _ => return Err(LexerError::InvalidUtf8(self.cursor)),
             }
         }
@@ -507,7 +579,8 @@ impl<T: Input> Lexer<T> {
         Ok(())
     }
     fn line_comment(&mut self) -> LexerResult<()> {
-        self.adv_certain(b"//");
+        self.adv_certain(b"//")?;
+        self.start_body();
         self.next_skip = NextSkip::RecoverLineComment;
         loop {
             let peek = self.peek_table(utf8_len)?;
@@ -515,22 +588,24 @@ impl<T: Input> Lexer<T> {
             match peek {
                 [] => break,
                 utf8_class!(line) => {
+                    self.token_end = None;
                     // consume newline
-                    self.advance(size);
+                    self.advance(size)?;
                     break;
                 }
                 utf8_class!(invalid) => {
                     return Err(LexerError::InvalidCharacter(self.cursor));
                 }
-                text if str::from_utf8(text).is_ok() => self.advance(size),
+                text if str::from_utf8(text).is_ok() => self.advance(size)?,
                 _ => return Err(LexerError::InvalidUtf8(self.cursor)),
             }
         }
         self.next_skip = NextSkip::None;
+        self.token_end = None;
         Ok(())
     }
     fn escline(&mut self) -> LexerResult<()> {
-        self.adv_certain(b"\\");
+        self.adv_certain(b"\\")?;
         loop {
             let peek = self.peek_table(|first| match first {
                 b'/' => 2,
@@ -539,8 +614,8 @@ impl<T: Input> Lexer<T> {
             let size = peek.len();
             match peek {
                 [] => break,
-                utf8_class!(space) => self.advance(size),
-                utf8_class!(line) => break self.advance(size),
+                utf8_class!(space) => self.advance(size)?,
+                utf8_class!(line) => break self.advance(size)?,
                 b"/*" => self.block_comment()?,
                 b"//" => break self.line_comment()?,
                 // /_ fallthrough
@@ -552,14 +627,14 @@ impl<T: Input> Lexer<T> {
     // advances the entire escape, including the \
     fn string_escape(&mut self) -> LexerResult<Option<char>> {
         let start_of_escape = self.cursor;
-        self.adv_certain(b"\\");
+        self.adv_certain(b"\\")?;
         let peek = self.peek_table(utf8_len)?;
         let size = peek.len();
         let ch = match peek {
             utf8_class!(space) | utf8_class!(line) => {
                 let mut size = size;
                 loop {
-                    self.advance(size);
+                    self.advance(size)?;
                     let peek_space = self.peek_table(utf8_len)?;
                     size = peek_space.len();
                     if !matches!(peek_space, utf8_class!(space) | utf8_class!(line)) {
@@ -586,50 +661,50 @@ impl<T: Input> Lexer<T> {
                     ((((v + v) as i8 >> 7) & 9) as u8 + (v & 15)).into()
                 }
                 macro_rules! hex { ($id:ident) => {$id @ (b'0'..=b'9' | b'A'..=b'F' | b'a'..=b'f')} }
-                self.advance(1);
+                self.advance(1)?;
                 self.adv_uncertain(b"{")?;
                 // TODO/style: improve how this looks? This uses fixed width peeks
                 // but it could be possible with variable width ones
                 // {^0}"
                 let value = match *self.peek(3..3)? {
                     [hex!(c2), hex!(c1), hex!(c0)] => {
-                        self.advance(3);
+                        self.advance(3)?;
                         let base = hex(c2) << 8 | hex(c1) << 4 | hex(c0);
                         // {000^}"
                         match *self.peek(2..2)? {
                             [hex!(c1), hex!(c0)] => {
                                 let base = base << 8 | hex(c1) << 4 | hex(c0);
-                                self.advance(2);
+                                self.advance(2)?;
                                 // {00000^}"
                                 match *self.peek(2..2)? {
                                     [hex!(c0), b'}'] => {
-                                        self.advance(2);
+                                        self.advance(2)?;
                                         base << 4 | hex(c0)
                                     }
                                     [b'}', ..] => {
-                                        self.advance(1);
+                                        self.advance(1)?;
                                         base
                                     }
                                     _ => return Err(LexerError::BadUnicodeEscape(start_of_escape)),
                                 }
                             }
                             [hex!(c0), b'}'] => {
-                                self.advance(2);
+                                self.advance(2)?;
                                 base << 4 | hex(c0)
                             }
                             [b'}', ..] => {
-                                self.advance(1);
+                                self.advance(1)?;
                                 base
                             }
                             _ => return Err(LexerError::BadUnicodeEscape(start_of_escape)),
                         }
                     }
                     [hex!(c1), hex!(c0), b'}'] => {
-                        self.advance(3);
+                        self.advance(3)?;
                         hex(c1) << 4 | hex(c0)
                     }
                     [hex!(c0), b'}', ..] => {
-                        self.advance(2);
+                        self.advance(2)?;
                         hex(c0)
                     }
                     _ => return Err(LexerError::BadUnicodeEscape(start_of_escape)),
@@ -640,7 +715,7 @@ impl<T: Input> Lexer<T> {
             }
             _ => return Err(LexerError::InvalidEscape(start_of_escape)),
         };
-        self.advance(size);
+        self.advance(size)?;
         Ok(Some(ch))
     }
     fn spaces(&mut self) -> LexerResult<()> {
@@ -652,7 +727,7 @@ impl<T: Input> Lexer<T> {
             let size = peek.len();
             match peek {
                 [] => break,
-                utf8_class!(space) => self.advance(size),
+                utf8_class!(space) => self.advance(size)?,
                 b"\\" => self.escline()?,
                 b"/*" => self.block_comment()?,
                 // /_ fallthrough
@@ -670,7 +745,7 @@ impl<T: Input> Lexer<T> {
             let size = peek.len();
             match peek {
                 [] => break,
-                utf8_class!(space) | utf8_class!(line) => self.advance(size),
+                utf8_class!(space) | utf8_class!(line) => self.advance(size)?,
                 b"\\" => self.escline()?,
                 b"/*" => self.block_comment()?,
                 b"//" => self.line_comment()?,
@@ -684,6 +759,10 @@ impl<T: Input> Lexer<T> {
         if number {
             let mut builder = NumberBuilder::new(text);
             'text: loop {
+                let cursor = self.cursor;
+                let token_end = self.token_end.unwrap_or(usize::MAX);
+                let document_end =
+                    usize::try_from(self.limits.max_document_bytes).unwrap_or(usize::MAX);
                 let peek = self.peek(1..usize::MAX)?;
                 if peek.is_empty() {
                     break 'text;
@@ -693,16 +772,22 @@ impl<T: Input> Lexer<T> {
                     // TODO/perf: compare codegen with making these ranges more specific
                     // or use a u128 lookup table :)
                     if !matches!(byte, b'+'..=b'9' | b'A'..=b'Z' | b'_' | b'a'..=b'z') {
-                        self.advance(i);
+                        self.advance(i)?;
                         break 'text;
                     }
+                    if i >= token_end.saturating_sub(cursor) {
+                        return Err(LexerError::TokenLimit(token_end));
+                    }
+                    if i >= document_end.saturating_sub(cursor) {
+                        return Err(LexerError::DocumentLimit(document_end));
+                    }
                     if !builder.step(byte) {
-                        self.advance(i);
+                        self.advance(i)?;
                         return Err(LexerError::InvalidNumber);
                     }
                 }
                 let size = peek.len();
-                self.advance(size);
+                self.advance(size)?;
             }
             if matches!(self.peek_table(utf8_len)?, [] | utf8_class!(not_ident)) {
                 match builder.finish() {
@@ -726,11 +811,11 @@ impl<T: Input> Lexer<T> {
                         break;
                     }
                     ch => {
-                        if let Ok(ch) = str::from_utf8(ch) {
-                            text.so_push_str(ch);
-                            self.advance(size);
+                        if let Some(ch) = codepoint(ch) {
+                            self.advance(size)?;
+                            text.so_push_char(ch);
                         } else {
-                            self.advance(1);
+                            self.advance(1)?;
                             return Err(LexerError::InvalidUtf8(cursor));
                         }
                     }
@@ -746,17 +831,18 @@ impl<T: Input> Lexer<T> {
             Number,
             Keyword,
         }
+        self.start_body();
         // check for number-like value or bad keyword
         let preview = match self.peek(2..2)? {
             [b'0'..=b'9', ..] | [b'+' | b'-', b'0'..=b'9'] => Preview::Number,
             [b'.', b'0'..=b'9'] => {
-                self.advance(1);
+                self.advance(1)?;
                 return Err(LexerError::InvalidNumber);
             }
             // peek further to see if it's an error (since both bytes would now be known)
             [b'+' | b'-', b'.'] => match self.peek(3..3)? {
                 [b'+' | b'-', b'.', b'0'..=b'9'] => {
-                    self.advance(2);
+                    self.advance(2)?;
                     return Err(LexerError::InvalidNumber);
                 }
                 _ => Preview::Regular,
@@ -783,6 +869,34 @@ impl<T: Input> Lexer<T> {
             (false, _) => self.ident_inner(preview == Preview::Number, SmolStrBuilder2::new()),
         }
     }
+    // A quote followed by too few raw-string hashes belongs to the body.
+    // Return the number of consumed hashes when the tentative delimiter fails.
+    fn closing_hashes(
+        &mut self,
+        quotes: usize,
+        hashes: Option<NonZeroUsize>,
+    ) -> LexerResult<Option<usize>> {
+        let end = self.token_end.take();
+        self.advance(quotes)?;
+        let count = hashes.map_or(0, NonZeroUsize::get);
+        let mut consumed = 0;
+        while consumed < count {
+            let tail = self.peek(1..count - consumed)?;
+            if tail.is_empty() {
+                return Err(LexerError::UnexpectedEof(self.cursor));
+            }
+            let matched = tail.iter().take_while(|&&byte| byte == b'#').count();
+            let mismatch = matched < tail.len();
+            self.advance(matched)?;
+            consumed += matched;
+            if mismatch {
+                self.token_end = end;
+                self.check_body(self.cursor)?;
+                return Ok(Some(consumed));
+            }
+        }
+        Ok(None)
+    }
     fn singleline_string(
         &mut self,
         hashes: Option<NonZeroUsize>,
@@ -797,26 +911,11 @@ impl<T: Input> Lexer<T> {
                 utf8_class!(invalid) => return Err(LexerError::InvalidCharacter(cursor)),
                 utf8_class!(line) => return Err(LexerError::UnexpectedStringNewline(cursor)),
                 b"\"" => {
-                    self.advance(1);
-                    let hashes = hashes.map_or(0, NonZeroUsize::get);
-                    let mut hashes_left = hashes;
-                    while hashes_left > 0 {
-                        let tail = self.peek(1..hashes_left)?;
-                        if tail.is_empty() {
-                            self.next_skip = NextSkip::None;
-                            return Err(LexerError::UnexpectedEof(cursor));
-                        }
-                        // TODO/perf: ensure this check is vectorized in some way
-                        if !tail.iter().all(|&v| v == b'#') {
-                            text.so_push_close(hashes - hashes_left);
-                            // rather than trying to find the exact point where the
-                            // hashes stop, just let the regular text parser handle them
-                            continue 'text;
-                        }
-                        let len = tail.len();
-                        hashes_left -= len;
-                        self.advance(len);
+                    if let Some(count) = self.closing_hashes(1, hashes)? {
+                        text.so_push_close(count);
+                        continue 'text;
                     }
+
                     self.next_skip = NextSkip::None;
                     break Ok(text.so_finish());
                 }
@@ -826,10 +925,9 @@ impl<T: Input> Lexer<T> {
                     }
                 }
                 ch => {
-                    text.so_push_str(
-                        str::from_utf8(ch).map_err(|_| LexerError::InvalidUtf8(cursor))?,
-                    );
-                    self.advance(size);
+                    let ch = codepoint(ch).ok_or(LexerError::InvalidUtf8(cursor))?;
+                    self.advance(size)?;
+                    text.so_push_char(ch);
                 }
             }
         }
@@ -847,7 +945,6 @@ impl<T: Input> Lexer<T> {
             _ => 0,
         }))
     }
-    #[expect(clippy::too_many_lines, reason = "off-by-one :)")]
     fn multiline_string_regular(&mut self, hashes: Option<NonZeroUsize>) -> LexerResult<Token> {
         // buffer of contents, escaped & normalized but not aligned
         let mut full_text = String::new();
@@ -859,16 +956,17 @@ impl<T: Input> Lexer<T> {
             let mut peek_indent = self.peek_table(utf8_len)?;
             // indent
             while matches!(peek_indent, utf8_class!(space)) {
-                full_text.push_str(str::from_utf8(peek_indent).unwrap_or_else(|_| unreachable!()));
+                let ch = codepoint(peek_indent).expect("known UTF-8 whitespace");
                 let size = peek_indent.len();
-                self.advance(size);
+                self.advance(size)?;
+                full_text.push(ch);
                 peek_indent = self.peek_table(utf8_len)?;
             }
             let text_start = full_text.len();
             let newline = self.newline_crlf()?;
             if let Some(size) = newline {
+                self.advance(size.get())?;
                 lines.push(None);
-                self.advance(size.get());
                 continue;
             }
             'text: loop {
@@ -883,37 +981,22 @@ impl<T: Input> Lexer<T> {
                     [] => return Err(LexerError::UnexpectedEof(cursor)),
                     utf8_class!(invalid) => return Err(LexerError::InvalidCharacter(cursor)),
                     [b'\r', ..] | utf8_class!(line) => {
-                        lines.push(Some((line_cursor, line_start, text_start, full_text.len())));
                         let size = match peek {
                             b"\r\n" => 2,
                             [b'\r', ..] => 1,
                             _ => size,
                         };
-                        self.advance(size);
+                        self.advance(size)?;
+                        lines.push(Some((line_cursor, line_start, text_start, full_text.len())));
                         break;
                     }
                     b"\"\"\"" => {
-                        self.advance(3);
-                        let hashes = hashes.map_or(0, NonZeroUsize::get);
-                        let mut hashes_left = hashes;
-                        while hashes_left > 0 {
-                            let tail = self.peek(1..hashes_left)?;
-                            if tail.is_empty() {
-                                self.next_skip = NextSkip::None;
-                                return Err(LexerError::UnexpectedEof(self.cursor));
-                            }
-                            // TODO/perf: ensure this check is vectorized in some way
-                            if !tail.iter().all(|&v| v == b'#') {
-                                full_text.push_str("\"\"\"");
-                                full_text.extend(repeat_n('#', hashes - hashes_left));
-                                // rather than trying to find the exact point where the
-                                // hashes stop, just let the regular text parser handle them
-                                continue 'text;
-                            }
-                            let len = tail.len();
-                            hashes_left -= len;
-                            self.advance(len);
+                        if let Some(count) = self.closing_hashes(3, hashes)? {
+                            full_text.push_str("\"\"\"");
+                            full_text.extend(repeat_n('#', count));
+                            continue 'text;
                         }
+
                         self.next_skip = NextSkip::None;
                         if full_text.len() > text_start {
                             return Err(LexerError::BadEndString(cursor));
@@ -921,8 +1004,8 @@ impl<T: Input> Lexer<T> {
                         break 'line line_start..text_start;
                     }
                     [b'"', ..] => {
+                        self.advance(1)?;
                         full_text.push('"');
-                        self.advance(1);
                     }
                     b"\\" if hashes.is_none() => {
                         if let Some(ch) = self.string_escape()? {
@@ -930,10 +1013,9 @@ impl<T: Input> Lexer<T> {
                         }
                     }
                     ch => {
-                        full_text.push_str(
-                            str::from_utf8(ch).map_err(|_| LexerError::InvalidUtf8(cursor))?,
-                        );
-                        self.advance(size);
+                        let ch = codepoint(ch).ok_or(LexerError::InvalidUtf8(cursor))?;
+                        self.advance(size)?;
+                        full_text.push(ch);
                     }
                 }
             }
@@ -949,7 +1031,8 @@ impl<T: Input> Lexer<T> {
             pre_newline = true;
             if let Some((line_cursor, line_start, text_start, line_end)) = line {
                 if text_start - line_start < tail_len
-                    || full_text[tail.clone()] != full_text[line_start..line_start + tail_len]
+                    || full_text.as_bytes()[tail.clone()]
+                        != full_text.as_bytes()[line_start..line_start + tail_len]
                 {
                     return Err(LexerError::BadIndent(Some(line_cursor)));
                 }
@@ -968,9 +1051,10 @@ impl<T: Input> Lexer<T> {
         let mut peek_indent = self.peek_table(utf8_len)?;
         // get first line indent
         while matches!(peek_indent, utf8_class!(space)) {
-            indent.push_str(str::from_utf8(peek_indent).unwrap_or_else(|_| unreachable!()));
+            let ch = codepoint(peek_indent).expect("known UTF-8 whitespace");
             let size = peek_indent.len();
-            self.advance(size);
+            self.advance(size)?;
+            indent.push(ch);
             peek_indent = self.peek_table(utf8_len)?;
         }
         let mut next_truncate_length = indent.len();
@@ -992,7 +1076,7 @@ impl<T: Input> Lexer<T> {
                     utf8_class!(invalid) => return Err(LexerError::InvalidCharacter(cursor)),
                     utf8_class!(space) => {
                         // doesn't set body flag
-                        self.advance(size);
+                        self.advance(size)?;
                     }
                     [b'\r', ..] | utf8_class!(line) => {
                         let size = match peek {
@@ -1000,30 +1084,15 @@ impl<T: Input> Lexer<T> {
                             [b'\r', ..] => 1,
                             _ => size,
                         };
-                        self.advance(size);
+                        self.advance(size)?;
                         break;
                     }
                     b"\"\"\"" => {
-                        self.advance(3);
-                        let hashes = hashes.map_or(0, NonZeroUsize::get);
-                        let mut hashes_left = hashes;
-                        while hashes_left > 0 {
-                            let tail = self.peek(1..hashes_left)?;
-                            if tail.is_empty() {
-                                self.next_skip = NextSkip::None;
-                                return Err(LexerError::UnexpectedEof(self.cursor));
-                            }
-                            // TODO/perf: ensure this check is vectorized/usize-ized in some way
-                            if !tail.iter().all(|&v| v == b'#') {
-                                // rather than trying to find the exact point where the
-                                // hashes stop, just let the regular text parser handle them
-                                has_body = true;
-                                continue 'text;
-                            }
-                            let len = tail.len();
-                            hashes_left -= len;
-                            self.advance(len);
+                        if self.closing_hashes(3, hashes)?.is_some() {
+                            has_body = true;
+                            continue 'text;
                         }
+
                         self.next_skip = NextSkip::None;
                         if has_body {
                             return Err(LexerError::BadEndString(cursor));
@@ -1034,14 +1103,14 @@ impl<T: Input> Lexer<T> {
                     }
                     [b'"', ..] => {
                         has_body = true;
-                        self.advance(1);
+                        self.advance(1)?;
                     }
                     // TODO/perf: duplicate loop with outer check? probably not worth it
                     b"\\" if hashes.is_none() => has_body |= self.string_escape()?.is_some(),
                     ch => {
                         _ = str::from_utf8(ch).map_err(|_| LexerError::InvalidUtf8(cursor))?;
                         has_body = true;
-                        self.advance(size);
+                        self.advance(size)?;
                     }
                 }
             }
@@ -1053,20 +1122,17 @@ impl<T: Input> Lexer<T> {
             next_truncate_length = indent.len();
             let mut matched_bytes = 0;
             while matched_bytes < indent.len() {
-                // TODO/perf: vectorizable approach https://users.rust-lang.org/t/25815
-                fn common_prefix(a: &[u8], b: &[u8]) -> usize {
-                    a.iter().zip(b).take_while(|(a, b)| a == b).count()
+                let ch = self.peek_table(utf8_len)?;
+                if ch.is_empty() {
+                    return Err(LexerError::UnexpectedEof(self.cursor));
                 }
-                let peek = self.peek(1..indent.len() - matched_bytes)?;
-                let next = &indent.as_bytes()[matched_bytes..];
-                let common = common_prefix(peek, next);
-                matched_bytes += common;
-                let size = peek.len();
-                self.advance(common);
-                if common < size {
+                if !indent.as_bytes()[matched_bytes..].starts_with(ch) {
                     next_truncate_length = matched_bytes;
                     break;
                 }
+                let size = ch.len();
+                self.advance(size)?;
+                matched_bytes += size;
             }
         }
         Ok(Token::SkippedString)
@@ -1078,7 +1144,7 @@ impl<T: Input> Lexer<T> {
             let mut advance = 0;
             for &byte in self.peek(1..usize::MAX)? {
                 if byte != b'#' {
-                    self.advance(advance);
+                    self.advance(advance)?;
                     hashes = hashes.checked_add(advance).unwrap();
                     break 'count;
                 }
@@ -1087,7 +1153,7 @@ impl<T: Input> Lexer<T> {
             if advance == 0 {
                 return Err(LexerError::UnexpectedEof(self.cursor));
             }
-            self.advance(advance);
+            self.advance(advance)?;
             // if this panics you've got bigger issues
             hashes = hashes.checked_add(advance).unwrap();
         }
@@ -1098,12 +1164,13 @@ impl<T: Input> Lexer<T> {
                     multiline: true,
                     hashes,
                 };
-                self.advance(3);
+                self.advance(3)?;
+                self.start_body();
                 let Some(size) = self.newline_crlf()? else {
                     return Err(LexerError::MissingStringNewline);
                 };
                 let size = size.get();
-                self.advance(size);
+                self.advance(size)?;
                 if skip {
                     self.multiline_string_skip(hashes)
                 } else {
@@ -1115,7 +1182,8 @@ impl<T: Input> Lexer<T> {
                     multiline: false,
                     hashes,
                 };
-                self.advance(1);
+                self.advance(1)?;
+                self.start_body();
                 if skip {
                     self.singleline_string(hashes, ())
                 } else {
@@ -1126,25 +1194,50 @@ impl<T: Input> Lexer<T> {
         }
     }
     fn advance_err(&mut self, n: usize, err: LexerError) -> LexerError {
-        self.advance(n);
-        err
+        self.advance(n).err().unwrap_or(err)
     }
-    fn recover_until(
-        &mut self,
-        table: impl Fn(u8) -> usize,
-        mut done: impl FnMut(&[u8]) -> bool,
-    ) -> LexerResult<()> {
+    fn recover_block(&mut self, mut depth: usize) -> LexerResult<()> {
         loop {
-            match self.peek_table(&table)? {
+            match self.peek(2..2)? {
                 [] => break,
-                ch => {
-                    if done(ch) {
-                        let size = ch.len();
-                        self.advance(size);
-                        break;
-                    }
-                    self.advance(1);
+                b"*/" if depth == 0 => {
+                    self.token_end = None;
+                    self.advance(2)?;
+                    break;
                 }
+                b"*/" => {
+                    depth -= 1;
+                    self.advance(2)?;
+                }
+                b"/*" => {
+                    if depth
+                        >= usize::try_from(self.limits.max_depth.saturating_sub(1))
+                            .unwrap_or(usize::MAX)
+                    {
+                        return Err(LexerError::DepthLimit(self.cursor));
+                    }
+                    depth += 1;
+                    self.advance(2)?;
+                }
+                _ => self.advance(1)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn recover_string(&mut self, multiline: bool, hashes: Option<NonZeroUsize>) -> LexerResult<()> {
+        let quotes: &[u8] = if multiline { b"\"\"\"" } else { b"\"" };
+        loop {
+            let next = self.peek(quotes.len()..quotes.len())?;
+            if next.is_empty() {
+                break;
+            }
+            if next == quotes {
+                if self.closing_hashes(quotes.len(), hashes)?.is_none() {
+                    break;
+                }
+            } else {
+                self.advance(1)?;
             }
         }
         Ok(())
@@ -1154,58 +1247,27 @@ impl<T: Input> Lexer<T> {
             NextSkip::None => {}
             NextSkip::Spaces => self.spaces()?,
             NextSkip::Lines => self.lines()?,
-            NextSkip::RecoverLineComment => {
-                self.recover_until(utf8_len, |ch| matches!(ch, utf8_class!(line)))?;
-            }
-            NextSkip::RecoverBlockComment(mut depth) => {
-                let mut overflow = false;
-                self.recover_until(
-                    |_| 2,
-                    |ch| {
-                        if ch == b"*/" {
-                            if depth == 0 {
-                                true
-                            } else {
-                                depth -= 1;
-                                false
-                            }
-                        } else if ch == b"/*" {
-                            if let Some(next) = depth.checked_add(1) {
-                                depth = next;
-                                false
-                            } else {
-                                overflow = true;
-                                true
-                            }
-                        } else {
-                            false
-                        }
-                    },
-                )?;
-                if overflow {
-                    self.next_skip = NextSkip::IrrecoverableError;
-                    return Err(LexerError::CommentDepth(self.cursor - 2));
+            NextSkip::RecoverLineComment => loop {
+                let next = self.peek_table(utf8_len)?;
+                if next.is_empty() {
+                    break;
                 }
-            }
+                if matches!(next, utf8_class!(line)) {
+                    let size = next.len();
+                    self.token_end = None;
+                    self.advance(size)?;
+                    break;
+                }
+                self.advance(1)?;
+            },
+            NextSkip::RecoverBlockComment(depth) => self.recover_block(depth)?,
             NextSkip::RecoverString { multiline, hashes } => {
-                let quotes = if multiline { 3_usize } else { 1_usize };
-                let length = quotes + hashes.map_or(0, NonZeroUsize::get);
-                let mut distance = 0;
-                self.recover_until(
-                    |_| 1,
-                    |ch| {
-                        if (ch == b"\"" && distance < quotes) || (ch == b"#" && distance < length) {
-                            distance += 1;
-                        } else {
-                            distance = 0;
-                        }
-                        distance == length
-                    },
-                )?;
+                self.recover_string(multiline, hashes)?;
             }
             NextSkip::IrrecoverableError => return Ok(Token::Eof),
         }
         self.next_skip = NextSkip::None;
+        self.token_end = None;
         let start = self.cursor;
         *out_cursor = start;
         // TODO/perf: ideas for general parsing improvements
@@ -1220,19 +1282,19 @@ impl<T: Input> Lexer<T> {
         let size = peek.len();
         Ok(match peek {
             [] => Token::Eof,
-            utf8_class!(bom) if start == 0 => self.just(3, Token::Bom),
+            utf8_class!(bom) if start == 0 => self.just(3, Token::Bom)?,
             utf8_class!(invalid) => {
                 return Err(self.advance_err(size, LexerError::InvalidCharacter(self.cursor)));
             }
-            utf8_class!(line) => self.begin_skip(size, NextSkip::Lines),
-            utf8_class!(space) => self.begin_skip(size, NextSkip::Spaces),
-            b"\\" => self.begin_skip(0, NextSkip::Spaces),
-            b";" => self.just(1, Token::SemiColon),
-            b"=" => self.just(1, Token::Equals),
-            b"(" => self.just(1, Token::OpenParen),
-            b")" => self.just(1, Token::CloseParen),
-            b"{" => self.just(1, Token::OpenCurly),
-            b"}" => self.just(1, Token::CloseCurly),
+            utf8_class!(line) => self.begin_skip(size, NextSkip::Lines)?,
+            utf8_class!(space) => self.begin_skip(size, NextSkip::Spaces)?,
+            b"\\" => self.begin_skip(0, NextSkip::Spaces)?,
+            b";" => self.just(1, Token::SemiColon)?,
+            b"=" => self.just(1, Token::Equals)?,
+            b"(" => self.just(1, Token::OpenParen)?,
+            b")" => self.just(1, Token::CloseParen)?,
+            b"{" => self.just(1, Token::OpenCurly)?,
+            b"}" => self.just(1, Token::CloseCurly)?,
             b"[" | b"]" => return Err(self.advance_err(1, LexerError::InvalidOperator)),
             // silly trick I'm taking from serde_json
             b"#tr" => self.keyword(b"#tr", b"ue", Token::Bool(true))?,
@@ -1242,9 +1304,15 @@ impl<T: Input> Lexer<T> {
             b"#-i" => self.keyword_number(b"#-i", b"nf", skip, Number::NEG_INFINITY)?,
             b"#na" => self.keyword_number(b"#na", b"n", skip, Number::NAN)?,
             [b'#', ..] | b"\"" => self.string(skip)?,
-            b"/-" => self.just(2, Token::SlashDash),
-            b"/*" => self.begin_skip(0, NextSkip::Spaces),
-            b"//" => self.begin_skip(0, NextSkip::Lines),
+            b"/-" => {
+                if self.slashdashes >= self.limits.max_expansion {
+                    return Err(LexerError::ExpansionLimit(start));
+                }
+                self.slashdashes += 1;
+                self.just(2, Token::SlashDash)?
+            }
+            b"/*" => self.begin_skip(0, NextSkip::Spaces)?,
+            b"//" => self.begin_skip(0, NextSkip::Lines)?,
             [b'/', ..] => return Err(self.advance_err(1, LexerError::InvalidOperator)),
             _ => self.ident(skip)?,
         })
@@ -1255,6 +1323,18 @@ impl<T: Input> Lexer<T> {
         // TODO/style: this whole mut ref thing is kinda jank
         let mut pos = self.cursor;
         let token = self.next_token_value(skip, &mut pos);
+        if token.is_ok() {
+            self.token_end = None;
+        }
+        if matches!(
+            token,
+            Err(LexerError::DocumentLimit(_)
+                | LexerError::DepthLimit(_)
+                | LexerError::TokenLimit(_)
+                | LexerError::ExpansionLimit(_))
+        ) {
+            self.next_skip = NextSkip::IrrecoverableError;
+        }
         (token, pos)
     }
     /// Get the current position, this is not the same as the next

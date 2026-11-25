@@ -24,8 +24,8 @@ pub enum InteropError {
     ExpectedNodeRoot,
     #[error("KDL entries cannot represent sequence or map values directly")]
     CompositeValueUnsupported,
-    #[error("invalid neutral number literal for KDL: {0}")]
-    InvalidNumber(SmolStr),
+    #[error("invalid neutral number literal for KDL")]
+    InvalidNumber,
 }
 
 impl Document {
@@ -181,7 +181,7 @@ impl TryFrom<&InteropValue> for Value {
             InteropValue::String(text) => Ok(Self::String(text.clone())),
             InteropValue::Number(number) => Number::from_str(number.as_str())
                 .map(Self::Number)
-                .map_err(|()| InteropError::InvalidNumber(SmolStr::default())),
+                .map_err(|()| InteropError::InvalidNumber),
             InteropValue::Bool(value) => Ok(Self::Bool(*value)),
             InteropValue::Null => Ok(Self::Null),
             InteropValue::Temporal(temporal) => Ok(Self::String(temporal.text.clone())),

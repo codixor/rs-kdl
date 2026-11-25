@@ -17,8 +17,6 @@ pub enum ValidatorError {
     TooManyEnd,
     #[error("Unclosed nodes at end")]
     Unclosed,
-    #[error("Expected {0}, got {1:?}")]
-    Expected(&'static str, Event),
     #[error("Expected {0}")]
     ExpectedEvent(&'static str),
 }

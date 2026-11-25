@@ -3,7 +3,7 @@
 A Rust implementation of KDL v2 with a streaming event reader, a document tree, a validator and a writer. Use it to parse, transform and write KDL configuration files.
 
 ```sh
-cargo add rs-kdl@0.1.0
+cargo add rs-kdl@0.2.0
 ```
 
 ```rust
@@ -127,10 +127,34 @@ The minimum and pinned stable Rust version is 1.100.0. Run `bash scripts/validat
 Originally developed in [codixor/rust-misc](https://github.com/codixor/rust-misc/tree/ae68abb54c655a8fcc009123fbc31821b82435e4/rs-kdl), building on [just-kdl](https://github.com/1e1001/rsutil/tree/main/just-kdl). The library is distributed under MIT or Apache-2.0. The generated compliance test data comes from the [KDL specification test suite](https://github.com/kdl-org/kdl/tree/main/tests/test_cases). See [the fixture license](https://github.com/codixor/rs-kdl/blob/main/LICENSE-KDL-TESTS).
 
 
-### Parser diagnostics
+### Limits and diagnostics
 
-Reader errors keep punctuation, token categories and byte spans. Unexpected string,
-number and boolean values are discarded. I/O errors keep the standard I/O error
-kind and discard custom messages. Validator errors identify the expected event
-without retaining the input event. Adapter errors discard input-derived numeric
-and date literals and opaque YAML/TOML backend messages.
+`Reader::new` and `Lexer::new` use `rs_format::Limits::default()`. To supply your
+own policy, use `Reader::with_limits`, `Lexer::with_limits`, or
+`Document::parse_with_limits(bytes, limits)`. The latter returns a
+`LocatedError`. A streaming reader returns its error and byte span as a pair,
+which can be converted with `LocatedError::from`. Errors implement
+`rs_format::FormatError`. Positions report zero-based byte offsets.
+
+The document limit counts encoded bytes, including whitespace. The token limit
+counts keys, identifier and number spellings, keyword spellings, comment bodies
+and encoded string bodies. Delimiters are excluded. Each open child block
+counts one level of nesting. Block comments have the same independent nesting
+ceiling. Expansion counts one unit per slashdash marker, including skipped
+subtrees. Zero forbids the corresponding work. A resource error ends the
+current stream. Owned KDL documents and the JSON text-to-tree adapters cap
+depth at 128 because their values are traversed and dropped recursively. The
+streaming reader can use a higher caller-selected depth.
+
+```rust
+use rs_kdl::{Category, Document, FormatError, Limits};
+let policy = Limits { max_token_bytes: 3, ..Limits::default() };
+let error = Document::parse_with_limits(b"long-name", policy).unwrap_err();
+assert_eq!(error.category(), Category::Limit);
+assert_eq!(error.position().unwrap().offset, Some(3));
+```
+
+Diagnostics discard unexpected values, custom I/O messages and invalid
+interop literals. The JSON, YAML and TOML text adapters on both `Document`
+and `InteropDocument` offer `from_*_str_with_limits` methods. Adapter errors
+retain the upstream category and source coordinates. The validator reports the expected event type.

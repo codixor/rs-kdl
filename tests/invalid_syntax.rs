@@ -1,6 +1,6 @@
 mod support;
 
-use rs_kdl::{LexerError, Reader, ReaderError, Token};
+use rs_kdl::{LexerError, Reader, ReaderError};
 
 fn first_error(source: &str) -> ReaderError {
     Reader::new(source.as_bytes())
@@ -22,10 +22,7 @@ fn invalid_number_fixture_reports_lexer_error() {
 fn invalid_type_fixture_reports_missing_close_paren() {
     let error = first_error(support::INVALID_MISSING_CLOSE_PAREN_INPUT);
 
-    assert!(matches!(
-        error,
-        ReaderError::ExpectedCloseParen(Token::SkippedString)
-    ));
+    assert!(matches!(error, ReaderError::ExpectedCloseParen));
 }
 
 #[test]
@@ -74,9 +71,10 @@ fn io_errors_preserve_the_kind_and_discard_messages() {
         .unwrap()
         .unwrap_err();
     assert_redacted(&error, "private-fixture");
-    assert!(
-        matches!(error, ReaderError::Lexer(LexerError::Io(ref io)) if io.kind() == ErrorKind::PermissionDenied)
-    );
+    assert!(matches!(
+        error,
+        ReaderError::Lexer(LexerError::Io(ErrorKind::PermissionDenied))
+    ));
 }
 
 #[cfg(feature = "toml-interop")]
@@ -94,6 +92,6 @@ fn yaml_bridge_drops_number_literals_and_backend_messages() {
         rs_kdl::InteropNumber::new("private-fixture"),
     ));
     assert_redacted(&model.to_yaml_value().unwrap_err(), "private-fixture");
-    let error = rs_kdl::YamlInteropError::from(rs_yaml::EmitError::Emit("private-fixture".into()));
+    let error = rs_kdl::YamlInteropError::from(rs_yaml::EmitError::Emit("private-fixture"));
     assert_redacted(&error, "private-fixture");
 }
