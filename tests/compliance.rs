@@ -67,9 +67,8 @@ mod dom {
                         if let Err(err) = validator.push(event) {
                             if strict {
                                 panic!("Validation: {err:?}");
-                            } else {
-                                eprintln!("Validation: {err:?}");
                             }
+                            eprintln!("Validation: {err:?}");
                         }
                     }
                 })
@@ -90,9 +89,8 @@ mod dom {
                 if let Err(err) = post_validator.push(&event) {
                     if strict {
                         panic!("Validation: {err:?}");
-                    } else {
-                        eprintln!("Validation: {err:?}");
                     }
+                    eprintln!("Validation: {err:?}");
                 }
                 writer.push(&event).unwrap();
             }
