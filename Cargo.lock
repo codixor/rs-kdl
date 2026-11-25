@@ -154,9 +154,9 @@ checksum = "e0921b3876b3a1df8a1c9f912e7f94342458022c2e84288015893d83c4d62a79"
 
 [[package]]
 name = "codixor-fast-yaml-core"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d12714ef2d950ca4f1e1eac5abd4c70bdb45f11572279ab3a06690ca0cea264"
+checksum = "bc5c73d0cb2e72aefbc184ace72a2e9aba51c91b42ee43b88d80b5e3c6b6c598"
 dependencies = [
  "indexmap",
  "memchr",
@@ -510,22 +510,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
-name = "rs-json"
-version = "0.3.0"
+name = "rs-format"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e3683319195fc7417f4c08d0091cf289270f406bfec8e2d43ab32a89ec73ff"
+checksum = "0923a90fc8c06ff3e4e3b8b96b2b738ed3019c9d8a6b9ea0ce259f17fa68dc38"
+
+[[package]]
+name = "rs-json"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a1285b39f6c358d2284d03457c65c7e352a251c0a0b36e7033e1c5b984cdc6"
 dependencies = [
  "memchr",
+ "rs-format",
  "simdutf8",
  "thiserror",
 ]
 
 [[package]]
 name = "rs-kdl"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "kdl",
+ "rs-format",
  "rs-json",
  "rs-toml",
  "rs-yaml",
@@ -535,24 +543,26 @@ dependencies = [
 
 [[package]]
 name = "rs-toml"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab68732f41c8a0549ac961a69d8b45f0b93f93b45d61ab1dc8bc203599af514d"
+checksum = "b169cd2a7bc7c6b8bdf833e58a62600367a34b3382209979d191321861e4b00f"
 dependencies = [
  "foldhash",
+ "rs-format",
  "thiserror",
  "zmij",
 ]
 
 [[package]]
 name = "rs-yaml"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9587d1eb157d00e6b5cdebdd10a9376547d1ebb19db5479ded686fb04adebbe"
+checksum = "6d37dbfa40a807ea54c0e8d5b6f0ab3d38b1e5db8eebf9b2e54c13eb8e43a248"
 dependencies = [
  "codixor-fast-yaml-core",
  "indexmap",
  "ordered-float",
+ "rs-format",
  "saphyr",
  "saphyr-parser",
  "thiserror",
