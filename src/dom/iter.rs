@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Iterator types.
 
+use alloc::vec;
 use alloc::vec::{IntoIter as VecIter, Vec};
 use core::slice::{Iter as SliceIter, from_ref as slice_from_ref};
 

@@ -35,7 +35,7 @@ jobs:
           for harness in read_events round_trip; do
             mkdir -p "fuzz/corpus/$harness"
             cp tests/golden/*.kdl "fuzz/corpus/$harness/"
-            cargo +nightly-2026-10-31 fuzz run --sanitizer address "$harness" -- -runs=5000 -max_len=2048 -timeout=5 -rss_limit_mb=512
+            cargo +nightly-2026-10-31 fuzz run --target x86_64-unknown-linux-gnu --sanitizer address "$harness" -- -runs=5000 -max_len=2048 -timeout=5 -rss_limit_mb=512
           done
   bench:
     runs-on: ubuntu-24.04

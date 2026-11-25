@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! KDL <-> neutral model conversions.
 
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::str::FromStr;
 

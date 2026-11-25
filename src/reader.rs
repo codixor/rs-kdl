@@ -5,6 +5,7 @@
 
 // TODO: consider re-merging lexer (or at least using hinted lexing?)
 
+use alloc::vec::Vec;
 use core::ops::Range;
 
 use smol_str::SmolStr;

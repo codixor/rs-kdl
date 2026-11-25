@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use core::convert::Infallible;
 use core::fmt;
 use core::ops::{Index, IndexMut};
+#[cfg(feature = "std")]
 use core::ptr::eq as ptr_eq;
 
 use smol_str::SmolStr;

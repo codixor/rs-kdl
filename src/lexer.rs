@@ -342,7 +342,7 @@ impl StringOutput for String {
     }
     fn so_finish_num(mut self, first: u8) -> Option<SmolStr> {
         let first = char::from(first);
-        self.replace_range(..1, &first.to_string());
+        self.replace_range(..1, first.encode_utf8(&mut [0; 4]));
         Some(self.into())
     }
 }
