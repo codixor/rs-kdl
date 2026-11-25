@@ -92,6 +92,6 @@ fn yaml_bridge_drops_number_literals_and_backend_messages() {
         rs_kdl::InteropNumber::new("private-fixture"),
     ));
     assert_redacted(&model.to_yaml_value().unwrap_err(), "private-fixture");
-    let error = rs_kdl::YamlInteropError::from(rs_yaml::EmitError::Emit("private-fixture".into()));
+    let error = rs_kdl::YamlInteropError::from(rs_yaml::EmitError::Emit("private-fixture"));
     assert_redacted(&error, "private-fixture");
 }

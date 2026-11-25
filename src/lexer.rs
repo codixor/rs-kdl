@@ -945,7 +945,6 @@ impl<T: Input> Lexer<T> {
             _ => 0,
         }))
     }
-    #[expect(clippy::too_many_lines, reason = "off-by-one :)")]
     fn multiline_string_regular(&mut self, hashes: Option<NonZeroUsize>) -> LexerResult<Token> {
         // buffer of contents, escaped & normalized but not aligned
         let mut full_text = String::new();

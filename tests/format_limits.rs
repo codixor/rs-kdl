@@ -116,15 +116,15 @@ fn recovery_keeps_the_budget_of_the_failed_token() {
 #[test]
 fn adapters_preserve_a_shared_limit_and_its_position() {
     use rs_kdl::InteropDocument;
-    let limits = Limits {
-        max_token_bytes: 2,
-        ..Limits::default()
-    };
     fn check(e: &dyn FormatError, expected: u64) {
         assert_eq!(e.category(), Category::Limit);
         assert_eq!(e.position().unwrap().offset, Some(expected));
         assert!(!format!("{e} {e:?}").contains("purple"));
     }
+    let limits = Limits {
+        max_token_bytes: 2,
+        ..Limits::default()
+    };
     check(
         &InteropDocument::from_json_str_with_limits("\"purple\"", limits).unwrap_err(),
         3,
