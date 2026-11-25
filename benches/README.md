@@ -2,7 +2,7 @@
 
 The committed bench entry point is:
 
-- `cargo bench -p rs-kdl@0.1.0 --bench kdl_core -- --sample-size 20`
+- `cargo bench -p rs-kdl --bench kdl_core -- --sample-size 20`
 
 Focused macOS profiler entry point:
 

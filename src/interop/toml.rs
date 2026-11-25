@@ -12,7 +12,7 @@ use core::str::FromStr;
 use rs_toml::{Arena, Item, Key, Table, ToTomlError};
 use thiserror::Error;
 
-use crate::Document;
+use crate::{AdapterDiagnostic, Category, Document, FormatError, Limits, Position};
 
 use super::kdl::InteropError;
 use super::model::{
@@ -34,13 +34,9 @@ const TOML_DATETIME: &str = "toml-datetime";
 #[non_exhaustive]
 pub enum TomlInteropError {
     #[error(transparent)]
-    TomlParse(rs_toml::Error),
-    #[error("TOML parse failed")]
-    TomlParseFailed,
+    TomlParse(AdapterDiagnostic),
     #[error(transparent)]
-    TomlEmit(ToTomlError),
-    #[error("TOML emit failed")]
-    TomlEmitFailed,
+    TomlEmit(AdapterDiagnostic),
     #[error(transparent)]
     Kdl(#[from] InteropError),
     #[error("expected a value-root interop document for TOML conversion")]
@@ -55,21 +51,38 @@ pub enum TomlInteropError {
     SequenceTooLarge,
     #[error("TOML table entry count exceeds implementation limits")]
     TableTooLarge,
-    #[error("invalid neutral TOML number literal: {0}")]
-    InvalidNumber(String),
-    #[error("invalid neutral TOML datetime literal: {0}")]
-    InvalidDateTime(String),
+    #[error("invalid neutral TOML number literal")]
+    InvalidNumber,
+    #[error("invalid neutral TOML datetime literal")]
+    InvalidDateTime,
 }
 
 impl From<rs_toml::Error> for TomlInteropError {
-    fn from(_: rs_toml::Error) -> Self {
-        Self::TomlParseFailed
+    fn from(error: rs_toml::Error) -> Self {
+        Self::TomlParse(AdapterDiagnostic::capture(&error))
     }
 }
 
 impl From<ToTomlError> for TomlInteropError {
-    fn from(_: ToTomlError) -> Self {
-        Self::TomlEmitFailed
+    fn from(error: ToTomlError) -> Self {
+        Self::TomlEmit(AdapterDiagnostic::capture(&error))
+    }
+}
+
+impl FormatError for TomlInteropError {
+    fn category(&self) -> Category {
+        match self {
+            Self::TomlParse(e) | Self::TomlEmit(e) => e.category(),
+            Self::Kdl(e) => e.category(),
+            Self::SequenceTooLarge | Self::TableTooLarge => Category::Limit,
+            _ => Category::Data,
+        }
+    }
+    fn position(&self) -> Option<Position> {
+        match self {
+            Self::TomlParse(e) | Self::TomlEmit(e) => e.position(),
+            _ => None,
+        }
     }
 }
 
@@ -102,6 +115,18 @@ impl InteropDocument {
     pub fn from_toml_str(source: &str) -> Result<Self, TomlInteropError> {
         let arena = Arena::new();
         let document = rs_toml::parse(source, &arena)?;
+        Ok(Self::from_toml_document(&document))
+    }
+    /// Parse TOML text with an explicit resource policy.
+    ///
+    /// # Errors
+    /// Returns a diagnostic when the text fails parsing, limits, or conversion.
+    pub fn from_toml_str_with_limits(
+        source: &str,
+        limits: Limits,
+    ) -> Result<Self, TomlInteropError> {
+        let arena = Arena::new();
+        let document = rs_toml::parse_with(source, &arena, &limits)?;
         Ok(Self::from_toml_document(&document))
     }
 
@@ -220,6 +245,16 @@ impl Document {
     pub fn from_toml_str(source: &str) -> Result<Self, TomlInteropError> {
         InteropDocument::from_toml_str(source)?.to_toml_contract_document()
     }
+    /// Parse TOML text with an explicit resource policy.
+    ///
+    /// # Errors
+    /// Returns a diagnostic when the text fails parsing, limits, or conversion.
+    pub fn from_toml_str_with_limits(
+        source: &str,
+        limits: Limits,
+    ) -> Result<Self, TomlInteropError> {
+        InteropDocument::from_toml_str_with_limits(source, limits)?.to_toml_contract_document()
+    }
 
     /// Convert this TOML-on-KDL contract document back into neutral TOML
     /// interop.
@@ -324,12 +359,10 @@ fn toml_item_from_interop_value<'a>(
 fn toml_item_from_number<'a>(number: &InteropNumber) -> Result<Item<'a>, TomlInteropError> {
     let text = number.as_str().replace('_', "");
     if is_toml_float_literal(&text) {
-        let value =
-            f64::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber(String::new()))?;
+        let value = f64::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber)?;
         Ok(Item::from(value))
     } else {
-        let value =
-            i128::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber(String::new()))?;
+        let value = i128::from_str(&text).map_err(|_| TomlInteropError::InvalidNumber)?;
         Ok(Item::from(value))
     }
 }
@@ -341,7 +374,7 @@ fn is_toml_float_literal(text: &str) -> bool {
 
 fn toml_item_from_temporal<'a>(temporal: &InteropTemporal) -> Result<Item<'a>, TomlInteropError> {
     let value = rs_toml::DateTime::from_str(temporal.as_str())
-        .map_err(|_| TomlInteropError::InvalidDateTime(String::new()))?;
+        .map_err(|_| TomlInteropError::InvalidDateTime)?;
     Ok(Item::from(value))
 }
 

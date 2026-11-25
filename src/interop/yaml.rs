@@ -12,7 +12,7 @@ use core::fmt::Write as _;
 use rs_yaml::{EmitError, Emitter, ParseError, ScalarOwned, Value};
 use thiserror::Error;
 
-use crate::Document;
+use crate::{AdapterDiagnostic, Category, Document, FormatError, Limits, Position};
 
 use super::kdl::InteropError;
 use super::model::{
@@ -33,13 +33,9 @@ const YAML_NULL: &str = "yaml-null";
 #[non_exhaustive]
 pub enum YamlInteropError {
     #[error(transparent)]
-    YamlParse(ParseError),
-    #[error("YAML parse failed")]
-    YamlParseFailed,
+    YamlParse(AdapterDiagnostic),
     #[error(transparent)]
-    YamlEmit(EmitError),
-    #[error("YAML emit failed")]
-    YamlEmitFailed,
+    YamlEmit(AdapterDiagnostic),
     #[error(transparent)]
     Kdl(#[from] InteropError),
     #[error("expected a value-root interop document for YAML conversion")]
@@ -50,19 +46,35 @@ pub enum YamlInteropError {
     UnsupportedMapKey(&'static str),
     #[error("YAML interop does not support {0} in the neutral bridge")]
     UnsupportedYamlValue(&'static str),
-    #[error("invalid neutral YAML number literal: {0}")]
-    InvalidNumber(String),
+    #[error("invalid neutral YAML number literal")]
+    InvalidNumber,
 }
 
 impl From<ParseError> for YamlInteropError {
-    fn from(_: ParseError) -> Self {
-        Self::YamlParseFailed
+    fn from(error: ParseError) -> Self {
+        Self::YamlParse(AdapterDiagnostic::capture(&error))
     }
 }
 
 impl From<EmitError> for YamlInteropError {
-    fn from(_: EmitError) -> Self {
-        Self::YamlEmitFailed
+    fn from(error: EmitError) -> Self {
+        Self::YamlEmit(AdapterDiagnostic::capture(&error))
+    }
+}
+
+impl FormatError for YamlInteropError {
+    fn category(&self) -> Category {
+        match self {
+            Self::YamlParse(e) | Self::YamlEmit(e) => e.category(),
+            Self::Kdl(e) => e.category(),
+            _ => Category::Data,
+        }
+    }
+    fn position(&self) -> Option<Position> {
+        match self {
+            Self::YamlParse(e) | Self::YamlEmit(e) => e.position(),
+            _ => None,
+        }
     }
 }
 
@@ -87,6 +99,16 @@ impl InteropDocument {
     /// unsupported bridge features.
     pub fn from_yaml_str(source: &str) -> Result<Self, YamlInteropError> {
         Self::from_yaml_value(&rs_yaml::safe_load(source)?)
+    }
+    /// Parse YAML text with an explicit resource policy.
+    ///
+    /// # Errors
+    /// Returns a diagnostic when the text fails parsing, limits, or conversion.
+    pub fn from_yaml_str_with_limits(
+        source: &str,
+        limits: Limits,
+    ) -> Result<Self, YamlInteropError> {
+        Self::from_yaml_value(&rs_yaml::safe_load_with_limits(source, &limits)?)
     }
 
     /// Convert a value-root neutral interop document into a YAML value tree.
@@ -172,6 +194,16 @@ impl Document {
     /// generation fails.
     pub fn from_yaml_str(source: &str) -> Result<Self, YamlInteropError> {
         Self::from_yaml_value(&rs_yaml::safe_load(source)?)
+    }
+    /// Parse YAML text with an explicit resource policy.
+    ///
+    /// # Errors
+    /// Returns a diagnostic when the text fails parsing, limits, or conversion.
+    pub fn from_yaml_str_with_limits(
+        source: &str,
+        limits: Limits,
+    ) -> Result<Self, YamlInteropError> {
+        Self::from_yaml_value(&rs_yaml::safe_load_with_limits(source, &limits)?)
     }
 
     /// Convert this YAML-on-KDL contract document back into neutral YAML
@@ -276,7 +308,7 @@ fn yaml_number_to_value(number: &InteropNumber) -> Result<Value, YamlInteropErro
     let parsed = rs_yaml::safe_load(number.as_str())?;
     match parsed {
         Value::Value(ScalarOwned::Integer(_) | ScalarOwned::FloatingPoint(_)) => Ok(parsed),
-        _ => Err(YamlInteropError::InvalidNumber(String::new())),
+        _ => Err(YamlInteropError::InvalidNumber),
     }
 }
 

@@ -72,6 +72,9 @@ extern crate alloc;
 
 use core::fmt;
 
+mod diagnostic;
+pub use diagnostic::{AdapterDiagnostic, LocatedError};
+pub use rs_format::{Category, FormatError, Limits, Position};
 pub mod dom;
 pub mod interop;
 pub mod lexer;

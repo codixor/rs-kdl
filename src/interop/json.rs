@@ -13,7 +13,7 @@ use rs_json::{Error as JsonError, Value as JsonValue, ValueKind, parse};
 use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::Document;
+use crate::{AdapterDiagnostic, Category, Document, FormatError, Limits, Position};
 
 use super::kdl::InteropError;
 use super::model::{
@@ -34,7 +34,7 @@ const JSON_NULL: &str = "json-null";
 #[non_exhaustive]
 pub enum JsonInteropError {
     #[error(transparent)]
-    Json(#[from] JsonError),
+    Json(#[from] AdapterDiagnostic),
     #[error(transparent)]
     Kdl(#[from] InteropError),
     #[error("expected a value-root interop document for JSON text conversion")]
@@ -43,6 +43,28 @@ pub enum JsonInteropError {
     InvalidContract(&'static str),
     #[error("invalid decoded JSON string: {0}")]
     InvalidString(&'static str),
+}
+
+impl From<JsonError> for JsonInteropError {
+    fn from(error: JsonError) -> Self {
+        Self::Json(AdapterDiagnostic::capture(&error))
+    }
+}
+
+impl FormatError for JsonInteropError {
+    fn category(&self) -> Category {
+        match self {
+            Self::Json(e) => e.category(),
+            Self::Kdl(e) => e.category(),
+            _ => Category::Data,
+        }
+    }
+    fn position(&self) -> Option<Position> {
+        match self {
+            Self::Json(e) => e.position(),
+            _ => None,
+        }
+    }
 }
 
 impl InteropDocument {
@@ -69,6 +91,16 @@ impl InteropDocument {
     /// escape cannot be decoded into the neutral model.
     pub fn from_json_str(source: &str) -> Result<Self, JsonInteropError> {
         Self::from_json_item(parse(source)?.root())
+    }
+    /// Parse JSON text with an explicit resource policy.
+    ///
+    /// # Errors
+    /// Returns a diagnostic when the text fails parsing, limits, or conversion.
+    pub fn from_json_str_with_limits(
+        source: &str,
+        limits: Limits,
+    ) -> Result<Self, JsonInteropError> {
+        Self::from_json_item(rs_json::parse_with_limits(source, limits)?.root())
     }
 
     /// Serialize a value-root neutral interop document into canonical JSON text.
@@ -130,6 +162,16 @@ impl Document {
     /// generation fails.
     pub fn from_json_str(source: &str) -> Result<Self, JsonInteropError> {
         Self::from_json_item(parse(source)?.root())
+    }
+    /// Parse JSON text with an explicit resource policy.
+    ///
+    /// # Errors
+    /// Returns a diagnostic when the text fails parsing, limits, or conversion.
+    pub fn from_json_str_with_limits(
+        source: &str,
+        limits: Limits,
+    ) -> Result<Self, JsonInteropError> {
+        Self::from_json_item(rs_json::parse_with_limits(source, limits)?.root())
     }
 
     /// Convert this KDL JSON contract document back into neutral JSON interop.

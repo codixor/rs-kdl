@@ -20,14 +20,16 @@ use crate::lexer::{Input, Lexer, LexerError, Token};
 pub enum ReaderError {
     #[error(transparent)]
     Lexer(LexerError),
-    #[error("Expected string, got {0}")]
-    ExpectedString(Token),
-    #[error("Expected value, got {0}")]
-    ExpectedValue(Token),
-    #[error("Expected ')', got {0}")]
-    ExpectedCloseParen(Token),
-    #[error("Unexpected boolean token")]
-    UnexpectedBoolean,
+    #[error("Expected a string")]
+    ExpectedString,
+    #[error("Expected a value")]
+    ExpectedValue,
+    #[error("Expected ')'")]
+    ExpectedCloseParen,
+    #[error("Unexpected end of input")]
+    UnexpectedEof,
+    #[error("Child block nesting limit exceeded at {0}")]
+    DepthLimit(usize),
     #[error("Unclosed '{{' before end of file")]
     UnclosedOpen,
     #[error("Unmatched '}}'")]
@@ -81,13 +83,11 @@ pub struct Reader<T> {
     brackets: Vec<bool>,
 }
 
-// Preserve punctuation and token categories without holding values from the input.
-fn unexpected(token: Token, make: fn(Token) -> ReaderError) -> ReaderError {
-    match token {
-        Token::String(_) => make(Token::SkippedString),
-        Token::Number(_) => make(Token::SkippedNumber),
-        Token::Bool(_) => ReaderError::UnexpectedBoolean,
-        other => make(other),
+fn unexpected(token: &Token, expected: ReaderError) -> ReaderError {
+    if matches!(token, Token::Eof) {
+        ReaderError::UnexpectedEof
+    } else {
+        expected
     }
 }
 
@@ -95,6 +95,10 @@ impl<T: Input> Reader<T> {
     /// Create a new reader from an input.
     pub fn new(input: T) -> Self {
         Self::from_lexer(Lexer::new(input))
+    }
+    /// Create a streaming reader with explicit inclusive limits.
+    pub fn with_limits(input: T, limits: rs_format::Limits) -> Self {
+        Self::from_lexer(Lexer::with_limits(input, limits))
     }
     /// Create a new reader directly from the token source.
     pub fn from_lexer(lexer: Lexer<T>) -> Self {
@@ -156,7 +160,7 @@ impl<T: Input> Reader<T> {
         Ok(match token.0 {
             Token::String(text) => Some(text),
             Token::SkippedString => None,
-            _ => return Err((unexpected(token.0, ReaderError::ExpectedString), token.1)),
+            _ => return Err((unexpected(&token.0, ReaderError::ExpectedString), token.1)),
         })
     }
     fn value(skip: bool, token: Spanned<Token>) -> ReaderResult<Option<Value>> {
@@ -167,7 +171,7 @@ impl<T: Input> Reader<T> {
             Token::Number(number) => Some(Value::Number(number)),
             Token::Bool(value) => (!skip).then_some(Value::Bool(value)),
             Token::Null => (!skip).then_some(Value::Null),
-            _ => return Err((unexpected(token.0, ReaderError::ExpectedValue), token.1)),
+            _ => return Err((unexpected(&token.0, ReaderError::ExpectedValue), token.1)),
         })
     }
     /// String ) Spaces?
@@ -180,7 +184,7 @@ impl<T: Input> Reader<T> {
         let close = self.advance();
         if close.0 != Token::CloseParen {
             return Err((
-                unexpected(close.0, ReaderError::ExpectedCloseParen),
+                unexpected(&close.0, ReaderError::ExpectedCloseParen),
                 close.1,
             ));
         }
@@ -283,6 +287,11 @@ impl<T: Input> Reader<T> {
                 match mv_token.0 {
                     Token::OpenCurly if real_body || sd => {
                         self.advance();
+                        if self.brackets.len()
+                            >= usize::try_from(self.lexer.limits().max_depth).unwrap_or(usize::MAX)
+                        {
+                            return Err((ReaderError::DepthLimit(mv_span.start), mv_span));
+                        }
                         self.brackets.push(sd && real_body);
                         self.state = State::NextNode;
                         Ok((InnerEvent::Children(sd), start..mv_span.end))
