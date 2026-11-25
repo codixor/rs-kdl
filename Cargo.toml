@@ -2,24 +2,25 @@
 name = "rs-kdl"
 description = "Pure-Rust KDL parser and writer focused on fast parse/write workflows"
 readme = "README.md"
-repository = "https://github.com/codixor/rust-misc"
+repository = "https://github.com/codixor/rs-kdl"
 keywords = ["kdl", "parser", "writer", "config", "serialization"]
 categories = ["parser-implementations", "encoding"]
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-version.workspace = true
+edition = "2024"
+rust-version = "1.100"
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+include = ["src/**", "tests/**", "examples/**", "benches/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE-*"]
 
 [lib]
 name = "rs_kdl"
 path = "src/lib.rs"
 
 [dependencies]
-smol_str.workspace = true
-thiserror.workspace = true
-rs-json = { workspace = true, optional = true }
-rs-toml = { workspace = true, optional = true }
-rs-yaml = { workspace = true, optional = true }
+smol_str = "0.3.7"
+thiserror = "2.0.21"
+rs-json = { version = "0.3.0", default-features = false, features = ["legacy"], optional = true }
+rs-toml = { version = "0.3.1", default-features = false, optional = true }
+rs-yaml = { version = "0.4.0", default-features = false, optional = true }
 
 [features]
 default = ["std", "json-interop", "toml-interop", "yaml-interop"]
@@ -31,12 +32,49 @@ yaml-interop = ["std", "dep:rs-yaml"]
 
 # For testing compliance & performance
 [dev-dependencies]
-criterion.workspace = true
-official_kdl.workspace = true
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support", "html_reports", "plotters"] }
+official_kdl = { package = "kdl", version = "6.7.1" }
 
 [[bench]]
 name = "kdl_core"
 harness = false
+required-features = ["json-interop", "toml-interop", "yaml-interop"]
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[[example]]
+name = "json_contract"
+required-features = ["json-interop"]
+
+[[example]]
+name = "toml_contract"
+required-features = ["toml-interop"]
+
+[[example]]
+name = "yaml_contract"
+required-features = ["yaml-interop"]
+
+[[test]]
+name = "compliance"
+required-features = ["std"]
+
+[[test]]
+name = "dom_normalize"
+required-features = ["std"]
+
+[[test]]
+name = "json_interop"
+required-features = ["json-interop"]
+
+[[test]]
+name = "toml_interop"
+required-features = ["toml-interop"]
+
+[[test]]
+name = "yaml_interop"
+required-features = ["yaml-interop"]

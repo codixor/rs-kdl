@@ -1,0 +1,6 @@
+The fixtures in tests/support/spec.rs were generated as Rust test functions and literals
+from the KDL specification test suite by the KDL contributors.
+Source: https://github.com/kdl-org/kdl/tree/main/tests/test_cases
+The fixture data and its adaptations are licensed under Creative Commons
+Attribution-ShareAlike 4.0 International.
+https://creativecommons.org/licenses/by-sa/4.0/

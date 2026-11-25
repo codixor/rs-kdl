@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 '<criterion bench regex>'" >&2
@@ -31,7 +31,7 @@ sample "$bench_process_name" 5 1 -wait -mayDie -file "$sample_output" >/dev/null
 sample_pid=$!
 trap 'kill "$sample_pid" 2>/dev/null || true' EXIT
 
-cargo bench -p rs-kdl@0.1.0 --bench "$bench_name" --manifest-path "$repo_root/Cargo.toml" -- "$bench_regex" --sample-size 100 --measurement-time 15
+cargo bench --locked --bench "$bench_name" --manifest-path "$repo_root/Cargo.toml" -- "$bench_regex" --sample-size 100 --measurement-time 15
 
 wait "$sample_pid" || true
 trap - EXIT

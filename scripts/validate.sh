@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-
-cargo test -p rs-kdl@0.1.0 --manifest-path "$repo_root/Cargo.toml"
-cargo test -p rs-kdl@0.1.0 --examples --manifest-path "$repo_root/Cargo.toml"
-cargo clippy -p rs-kdl@0.1.0 --all-targets --all-features --manifest-path "$repo_root/Cargo.toml" -- -D warnings
-cargo doc -p rs-kdl@0.1.0 --no-deps --manifest-path "$repo_root/Cargo.toml"
-cargo check -p rs-kdl@0.1.0 --benches --manifest-path "$repo_root/Cargo.toml"
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+for features in --no-default-features --all-features; do
+  cargo clippy --all-targets --locked "$features" -- -D warnings
+  cargo test --locked "$features"
+done
+for adapter in json-interop toml-interop yaml-interop; do
+  cargo test --locked --no-default-features --features "$adapter" --test "${adapter/-/_}"
+done
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --all-features --no-deps

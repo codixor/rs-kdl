@@ -9,7 +9,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
-use rs_json::{JsonError, JsonItem, JsonType, parse};
+use rs_json::legacy::{JsonError, JsonItem, JsonType, parse};
 use smol_str::SmolStr;
 use thiserror::Error;
 

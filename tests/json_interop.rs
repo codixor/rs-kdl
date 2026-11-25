@@ -1,4 +1,4 @@
-use rs_json::parse as parse_json;
+use rs_json::legacy::parse as parse_json;
 use rs_kdl::{Document, InteropDocument, InteropValue, JsonInteropError, Node};
 
 const JSON_SAMPLE: &str = r#"{

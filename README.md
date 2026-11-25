@@ -1,193 +1,34 @@
 # rs-kdl
 
-`rs-kdl` is the workspace’s main pure-Rust KDL parser and writer crate.
+A Rust implementation of KDL v2 with a streaming event reader, a document tree, a validator and a writer. Use it to parse, transform and write KDL configuration files.
 
-The crate direction is:
+```sh
+cargo add rs-kdl@0.1.0
+```
 
-- keep the crate library-first
-- keep the parser/writer focused on KDL itself
-- modernize errors with `thiserror`
-- move proof tests to crate-root `tests/`
-- add golden fixtures and a benchmark matrix
-- use performance helpers only after measurement
+```rust
+use rs_kdl::{Document, Reader};
 
-## Current status
+let source: &[u8] = br#"service "api" port=8080"#;
+let document = Reader::new(source).collect::<Result<Document, _>>().expect("valid KDL");
+assert_eq!(document.nodes.len(), 1);
+```
 
-The crate is on a clean finished core now:
+## Format adapters
 
-- workspace-aligned manifest
-- `thiserror` public error types
-- crate-root integration tests
-- split-out writer, round-trip, validator, and normalization tests
-- golden parser/writer fixtures, including strings, numbers, type hints, and invalid syntax inputs
-- public crate-root re-exports for common types
-- neutral interop model plus KDL conversion hooks
-- examples for parse, stream, write, and validate flows
-- broader Criterion benchmark matrix
-- maintained-alternative comparison baseline against official `kdl`
-- bench runner and bench README
-- strict validation script
+The default features enable `std`, `json-interop`, `toml-interop`, and `yaml-interop`. Each adapter can be enabled separately. They use the crates.io releases of `rs-json`, `rs-toml`, and `rs-yaml` respectively. The JSON adapter uses the `rs-json` 0.3 compatibility API for borrowed `JsonItem` values. Use `InteropDocument` to convert values between formats, or `Document` when the output should be KDL. See the [examples](https://github.com/codixor/rs-kdl/tree/main/examples) for each adapter.
 
-The crate-level decisions are also settled:
+The YAML adapter accepts string map keys and rejects aliases and explicit tags. TOML text output requires a table root and rejects null values.
 
-- keep `std` as the default feature surface for now
-- do not add a separate explicit `alloc` feature until it unlocks a real use case
-- keep `LexerError`, `ReaderError`, and `ValidatorError` public
-- keep `ssb2` private as an internal implementation detail
-- keep performance helper crates opt-in only after measurement
+## Examples and conversion behavior
 
-## Current starting point
-
-The current code is clearly based on the `just-kdl` parser/writer line:
-
-- streaming parser
-- event reader/writer
-- small dependency surface
-- KDL v2-oriented performance-first design
-
-That is a good fit for a pure-Rust fast KDL crate.
-
-## Ecosystem position
-
-There are two important KDL directions in Rust today:
-
-- `just-kdl`
-  - performance-oriented
-  - small streaming parser/writer
-  - good fit for machine-owned parse/write and conversion work
-- official `kdl`
-  - formatting-preserving
-  - better for editing human-maintained KDL files
-  - heavier and intentionally document-oriented
-
-So the current local direction is the right one if the goal is:
-
-- fast KDL parsing
-- fast KDL writing
-- lower allocation pressure
-- interop and conversion pipelines
-
-## Important interop rule
-
-KDL itself should not become the universal semantic pivot for JSON, TOML, and YAML by going through KDL text.
-
-That would be too lossy and format-shaped.
-
-Instead, the better architecture is:
-
-- parse each format into a neutral document/value model
-- convert between models there
-- let `kdl` be the KDL adapter in that pipeline
-
-The crate now ships that neutral starting point directly:
-
-- `InteropDocument`
-- `InteropRoot`
-- `InteropNode`
-- `InteropField`
-- `InteropValue`
-
-KDL converts to and from that model with:
-
-- `Document::to_interop()`
-- `Document::from_interop(...)`
-
-With the JSON adapter enabled on the default feature set, the crate also ships
-explicit JSON, TOML, and YAML-on-KDL contracts:
-
-- `InteropDocument::from_json_str(...)`
-- `InteropDocument::from_json_item(...)`
-- `InteropDocument::to_json_string()`
-- `InteropValue::from_json_item(...)`
-- `Document::from_json_item(...)`
-- `Document::from_json_str(...)`
-- `Document::to_json_string()`
-- `InteropDocument::from_toml_str(...)`
-- `InteropDocument::from_toml_document(...)`
-- `InteropDocument::from_toml_table(...)`
-- `InteropDocument::to_toml_string()`
-- `InteropDocument::to_toml_table(...)`
-- `InteropValue::from_toml_item(...)`
-- `Document::from_toml_document(...)`
-- `Document::from_toml_table(...)`
-- `Document::from_toml_str(...)`
-- `Document::to_toml_string()`
-- `InteropDocument::from_yaml_str(...)`
-- `InteropDocument::from_yaml_value(...)`
-- `InteropDocument::to_yaml_string()`
-- `InteropValue::from_yaml_value(...)`
-- `Document::from_yaml_value(...)`
-- `Document::from_yaml_str(...)`
-- `Document::to_yaml_string()`
-
-That contract is generated KDL, not generic KDL semantics. It exists so we can
-benchmark and validate JSON <-> KDL conversion through the neutral model
-without forcing arbitrary formats through raw KDL text.
-
-The measured ownership decision is now clear:
-
-- the direct shared-model path is the preferred JSON bridge
-- the generated JSON-on-KDL contract stays as an additive KDL adapter when a
-  real `Document` is required
-- the direct shared-model path is also the preferred TOML bridge
-- the generated TOML-on-KDL contract stays as an additive KDL adapter when a
-  real `Document` is required
-
-Current TOML interop baseline:
-
-- `kdl/interop/toml_text_to_interop`: about `2.58-2.69 µs`
-- `kdl/interop/toml_table_to_interop`: about `1.24-1.32 µs`
-- `kdl/interop/toml_to_kdl_contract`: about `17.76-19.41 µs`
-- `kdl/interop/toml_interop_to_toml`: about `2.74-2.85 µs`
-- `kdl/interop/toml_direct_round_trip`: about `5.16-5.75 µs`
-- `kdl/interop/toml_contract_round_trip`: about `26.62-29.75 µs`
-
-That gap is large enough to keep the same rule we adopted for JSON and YAML:
-direct shared-model interop is the default semantic bridge, and the generated
-TOML-on-KDL contract is the additive path when a real KDL `Document` is the
-thing the caller actually needs.
-- the direct shared-model path is also the preferred YAML bridge
-- the generated YAML-on-KDL contract stays as an additive KDL adapter when a
-  real `Document` is required
-
-So this crate should prepare for future interop, but not by forcing every format through raw KDL syntax.
-
-## Current scope
-
-This crate should own:
-
-- KDL lexer/parser
-- KDL reader/event stream
-- KDL DOM/document model
-- KDL writer
-- KDL validation
-- KDL-focused interop adapters later
-
-This crate should not own:
-
-- JSON parsing
-- TOML parsing
-- YAML parsing
-- generic config merging policy
-- serde derive frameworks
-
-## Validation shape
-
-- crate-root `tests/`
-- golden parser/writer fixtures
-- Criterion benchmark matrix
-- strict Clippy
-- examples and validation scripts
-
-## Current examples
-
-- `cargo run -p rs-kdl@0.1.0 --example parse_document`
-- `cargo run -p rs-kdl@0.1.0 --example stream_events`
-- `cargo run -p rs-kdl@0.1.0 --example write_document`
-- `cargo run -p rs-kdl@0.1.0 --example validate_stream`
-- `cargo run -p rs-kdl@0.1.0 --example json_contract`
-- `cargo run -p rs-kdl@0.1.0 --example toml_contract`
-- `cargo run -p rs-kdl@0.1.0 --example yaml_contract`
+- `cargo run --example parse_document`
+- `cargo run --example stream_events`
+- `cargo run --example write_document`
+- `cargo run --example validate_stream`
+- `cargo run --example json_contract`
+- `cargo run --example toml_contract`
+- `cargo run --example yaml_contract`
 
 ## Interop example
 
@@ -208,7 +49,7 @@ assert_eq!(round_trip, document);
 JSON contract example:
 
 ```rust
-use rs_json::parse as parse_json;
+use rs_json::legacy::parse as parse_json;
 use rs_kdl::{Document, InteropDocument};
 
 let json = r#"{"name":"rust-misc","enabled":true}"#;
@@ -279,12 +120,8 @@ Current TOML bridge boundaries:
 - the release-mode contract path is covered by a regression test that keeps
   numeric lexemes stable through `Document::from_toml_str(...).to_toml_string()`
 
-## Validation
+## Development
 
-- `bash ./kdl/scripts/validate.sh`
+The minimum and pinned stable Rust version is 1.100.0. Run `bash scripts/validate.sh` for strict Clippy, tests and documentation, `cargo deny --locked --all-features check` for dependencies, and `bash scripts/bench.sh` for the Criterion suite, including comparisons with the `kdl` crate. CI runs both fuzz targets with AddressSanitizer on a pinned nightly. [Benchmarks](https://github.com/codixor/rs-kdl/tree/main/benches)
 
-## Benchmarks
-
-- `bash ./kdl/scripts/bench.sh`
-
-The execution roadmap lives in [PLAN.md](./PLAN.md).
+Originally developed in [codixor/rust-misc](https://github.com/codixor/rust-misc/tree/ae68abb54c655a8fcc009123fbc31821b82435e4/rs-kdl), building on [just-kdl](https://github.com/1e1001/rsutil/tree/main/just-kdl). The library is distributed under MIT or Apache-2.0. The generated compliance test data comes from the [KDL specification test suite](https://github.com/kdl-org/kdl/tree/main/tests/test_cases). See [the fixture license](https://github.com/codixor/rs-kdl/blob/main/LICENSE-KDL-TESTS).

@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use official_kdl::KdlDocument as OfficialDocument;
-use rs_json::parse as parse_json;
+use rs_json::legacy::parse as parse_json;
 use rs_kdl::{Document, Event, Lexer, Reader, Token, Validator, Writer};
 use rs_toml::{Arena as TomlArena, parse as parse_toml};
 use rs_yaml::safe_load as parse_yaml;

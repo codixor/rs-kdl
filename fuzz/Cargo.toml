@@ -1,0 +1,30 @@
+[package]
+name = "rs-kdl-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+rs-kdl = { version = "0.1.0", path = "..", default-features = false, features = ["std"] }
+
+[[bin]]
+name = "read_events"
+path = "fuzz_targets/read_events.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "round_trip"
+path = "fuzz_targets/round_trip.rs"
+test = false
+doc = false
+bench = false

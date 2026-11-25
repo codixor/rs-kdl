@@ -1,0 +1,64 @@
+name: Rust checks
+on:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo fmt --all --check && cargo fmt --manifest-path fuzz/Cargo.toml --check
+      - run: bash scripts/validate.sh
+      - run: cargo package --locked
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: cargo-deny@0.22.0,cargo-fuzz@0.13.2
+      - run: cargo deny --locked --all-features check
+      - run: cargo deny --manifest-path fuzz/Cargo.toml --locked --all-features --config deny.toml check
+      - run: cargo clippy --manifest-path fuzz/Cargo.toml --locked --all-targets -- -D warnings
+      - run: rustup toolchain install nightly-2026-10-31 --profile minimal
+      - name: Bounded AddressSanitizer fuzzing
+        run: |
+          for harness in read_events round_trip; do
+            mkdir -p "fuzz/corpus/$harness"
+            cp tests/golden/*.kdl "fuzz/corpus/$harness/"
+            cargo +nightly-2026-10-31 fuzz run --sanitizer address "$harness" -- -runs=5000 -max_len=2048 -timeout=5 -rss_limit_mb=512
+          done
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Measure the Criterion suite
+        run: bash scripts/bench.sh --warm-up-time 0.3 --measurement-time 0.5 --sample-size 20 --nresamples 2000 --noplot
+      - name: Write benchmark medians
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          files = sorted(Path("target/criterion").glob("**/new/estimates.json"))
+          if not files:
+              raise SystemExit("No Criterion results found")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              print("| Benchmark | Median (ns) |\n| --- | ---: |", file=summary)
+              for path in files:
+                  name = json.loads(path.with_name("benchmark.json").read_text())["full_id"]
+                  ns = json.loads(path.read_text())["median"]["point_estimate"]
+                  print(f"| {name} | {ns:.1f} |", file=summary)
+                  print(f"{name}: {ns:.1f} ns")
+          PY
