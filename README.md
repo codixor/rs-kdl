@@ -1,6 +1,11 @@
 # rs-kdl
 
-A Rust implementation of KDL v2 with a streaming event reader, a document tree, a validator and a writer. Use it to parse, transform and write KDL configuration files.
+A KDL v2 reader and writer for Rust. Use `Reader` to process events as they
+arrive or collect them into a `Document` to inspect and edit nodes.
+Version 0.3.0 requires Rust 1.100 or newer.
+[crates.io](https://crates.io/crates/rs-kdl/0.3.0) · [API reference](https://docs.rs/rs-kdl/0.3.0/rs_kdl/)
+
+## Quick start
 
 ```sh
 cargo add rs-kdl@0.3.0
@@ -9,14 +14,27 @@ cargo add rs-kdl@0.3.0
 ```rust
 use rs_kdl::{Document, Reader};
 
-let source: &[u8] = br#"service "api" port=8080"#;
-let document = Reader::new(source).collect::<Result<Document, _>>().expect("valid KDL");
-assert_eq!(document.nodes.len(), 1);
+fn main() {
+    let source: &[u8] = b"service \"api\" port=8080\nservice \"worker\"\n";
+    let document = Reader::new(source).collect::<Result<Document, _>>().unwrap();
+    assert_eq!(document.get("service").count(), 2);
+}
 ```
 
 ## Format adapters
 
-The default features enable `std`, `json-interop`, `toml-interop`, and `yaml-interop`. Each adapter can be enabled separately. They use the crates.io releases of `rs-json`, `rs-toml`, and `rs-yaml` respectively. The JSON adapter borrows `Value` views from `rs-json` 0.4. The YAML adapter accepts and returns `Value` from `rs-yaml` 0.6. Use `InteropDocument` to convert values between formats, or `Document` when the output should be KDL. See the [examples](https://github.com/codixor/rs-kdl/tree/main/examples) for each adapter.
+The default build enables `std` and all three adapters. Use `InteropDocument`
+for a value shared across formats and `Document` for a KDL node tree.
+
+| Feature | Dependency in rs-kdl 0.3.0 | Text entry point |
+| --- | --- | --- |
+| `json-interop` | `rs-json` 0.4.1 (0.4 series) | `InteropDocument::from_json_str` |
+| `toml-interop` | `rs-toml` 0.4.1 (0.4 series) | `InteropDocument::from_toml_str` |
+| `yaml-interop` | `rs-yaml` 0.6.0 (0.6 series) | `InteropDocument::from_yaml_str` |
+
+For KDL plus JSON only, use `cargo add rs-kdl@0.3.0 --no-default-features --features json-interop`.
+The borrowed `from_json_item` API accepts an `rs-json` 0.4 value. Applications
+using `rs-json` 0.5 can pass JSON text to `from_json_str` across that version boundary.
 
 The YAML adapter accepts string map keys and rejects aliases and explicit tags. TOML text output requires a table root and rejects null values.
 
@@ -49,13 +67,11 @@ assert_eq!(round_trip, document);
 JSON contract example:
 
 ```rust
-use rs_json::parse as parse_json;
 use rs_kdl::{Document, InteropDocument};
 
-let json = r#"{"name":"rust-misc","enabled":true}"#;
-let item = parse_json(json).expect("json parse");
-let interop = InteropDocument::from_json_item(item.root()).expect("shared-model bridge");
-let document = Document::from_json_item(item.root()).expect("json contract");
+let json = r#"{"name":"api","enabled":true}"#;
+let interop = InteropDocument::from_json_str(json).expect("shared-model bridge");
+let document = Document::from_json_str(json).expect("json contract");
 let rendered = document.to_json_string().expect("json render");
 
 let reparsed = InteropDocument::from_json_str(&rendered).expect("json parse");
@@ -124,10 +140,10 @@ Current TOML bridge boundaries:
 
 The minimum and pinned stable Rust version is 1.100.0. Run `bash scripts/validate.sh` for strict Clippy, tests and documentation, `cargo deny --locked --all-features check` for dependencies, and `bash scripts/bench.sh` for the Criterion suite, including comparisons with the `kdl` crate. CI runs both fuzz targets with AddressSanitizer on a pinned nightly. [Benchmarks](https://github.com/codixor/rs-kdl/tree/main/benches)
 
-Originally developed in [codixor/rust-misc](https://github.com/codixor/rust-misc/tree/ae68abb54c655a8fcc009123fbc31821b82435e4/rs-kdl), building on [just-kdl](https://github.com/1e1001/rsutil/tree/main/just-kdl). The library is distributed under MIT or Apache-2.0. The generated compliance test data comes from the [KDL specification test suite](https://github.com/kdl-org/kdl/tree/main/tests/test_cases). See [the fixture license](https://github.com/codixor/rs-kdl/blob/main/LICENSE-KDL-TESTS).
+Originally developed in the `codixor/rust-misc` workspace at `ae68abb`, building on [just-kdl](https://github.com/1e1001/rsutil/tree/main/just-kdl). The library is distributed under MIT or Apache-2.0. The generated compliance test data comes from the [KDL specification test suite](https://github.com/kdl-org/kdl/tree/main/tests/test_cases). See [the fixture license](https://github.com/codixor/rs-kdl/blob/main/LICENSE-KDL-TESTS).
 
 
-### Limits and diagnostics
+## Limits and diagnostics
 
 `Reader::new` and `Lexer::new` use `rs_format::Limits::default()`. To supply your
 own policy, use `Reader::with_limits`, `Lexer::with_limits`, or
